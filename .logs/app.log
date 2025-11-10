@@ -1,0 +1,30 @@
+[CSV] Loaded 111 rows (delimiter=';')
+[RESUME] Highlight row 14, next to send: row 14
+[START] Starting at row 14
+[FRAME] <SOH>O<STX><ETX>079<CR>
+[PUT ONLINE] None
+[FRAME] <SOH>V<STX>015<ETX>236<CR>
+V] var 01 <- 5 | None
+[FRAME] <SOH>V<STX>02ID: 1Content aa<ETX>141<CR>
+V] var 02 <- ID: 1Content aa | None
+[FRAME] <SOH>V<STX>03verybigtest<ETX>113<CR>
+V] var 03 <- verybigtest | None
+[FRAME] <SOH>V<STX>04sample<ETX>060<CR>
+V] var 04 <- sample | None
+[FRAME] <SOH>V<STX>052024-08-23 15:31:3<ETX>059<CR>
+V] var 05 <- 2024-08-23 15:31:3 | None
+[FRAME] <SOH>V<STX>062024<ETX>132<CR>
+V] var 06 <- 2024 | None
+[FRAME] <SOH>V<STX>07Print job started<ETX>060<CR>
+V] var 07 <- Print job started | None
+[FRAME] <SOH>V<STX>08<ETX>190<CR>
+[STOP] Converting to pause (saving resume point)…
+V] var 08 <-  | None
+[DONE] Batch complete
+[START] Starting at row 14
+[FRAME] <SOH>O<STX><ETX>079<CR>
+[PUT ONLINE] None
+[FRAME] <SOH>V<STX>015<ETX>236<CR>
+[STOP] Converting to pause (saving resume point)…
+V] var 01 <- 5 | None
+[DONE] Batch complete

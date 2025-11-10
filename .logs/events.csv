@@ -1,0 +1,4 @@
+ts,level,actor,action,details_json
+2025-10-14T08:33:52,INFO,admin,login_ok,"{""username"": ""admin""}"
+2025-10-14T08:33:52,INFO,admin,login,{}
+2025-10-14T08:34:10,INFO,admin,user_create,"{""username"": ""op"", ""role"": ""operator""}"

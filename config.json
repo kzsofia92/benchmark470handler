@@ -1,0 +1,16 @@
+{
+  "serial": {
+    "port": "COM1",
+    "baud": 9600,
+    "parity": "N",
+    "stopbits": 0
+  },
+  "last_csv": "C:/Users/Logisztika/Documents/bigtest.log.csv",
+  "pattern": "",
+  "resume": {
+    "path": "C:/Users/Logisztika/Documents/bigtest.log.csv",
+    "highlight": 13,
+    "next": 13,
+    "pending": true
+  }
+}

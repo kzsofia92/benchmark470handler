@@ -1,0 +1,18 @@
+{
+  "users": {
+    "admin": {
+      "username": "admin",
+      "role": "admin",
+      "pwd_salt_b64": "K56iiCC8blUHuvFM6b/KxQ==",
+      "pwd_hash_b64": "QWqJB4LOS1kEJXh7onlEB4G/OZiC3tEWaZ6wO3H9hU8=",
+      "iterations": 120000
+    },
+    "op": {
+      "username": "op",
+      "role": "operator",
+      "pwd_salt_b64": "cdl+BbM5n1XVxZ7A/colYA==",
+      "pwd_hash_b64": "6XD9DHVB+FdSZbFsaFMdrJ86Vgu0MfqzvliA7hOhMgc=",
+      "iterations": 120000
+    }
+  }
+}
