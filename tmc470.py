@@ -454,3 +454,26 @@ class TMC470:
     
     def _send_raw(self, frame: bytes) -> None:
         self._send(frame)
+
+    def verify_live_connection(self, tries: int = 2, sleep_ms: int = 120) -> tuple[bool, str, str]:
+        """
+        Prove a real TMC-470/520 is on the other end:
+        - (optionally) nudge ONLINE
+        - poll machine status which returns ASCII + CR
+        Returns (ok, translated_status, raw_response)
+        """
+        last_raw = ""
+        for _ in range(max(1, tries)):
+            try:
+                # This may return None (ACK-only path); that's fine — we just nudge.
+                self.put_online()
+            except Exception:
+                pass
+
+            status, raw = self.poll_machine_status() or ("", "")
+            last_raw = raw or ""
+            # Accept any CR-terminated ASCII as proof of life; status map is a bonus.
+            if raw and raw.endswith("\r"):
+                return True, status, raw
+            time.sleep(sleep_ms / 1000.0)
+        return False, "", last_raw

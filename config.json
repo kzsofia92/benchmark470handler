@@ -12,5 +12,6 @@
     "highlight": 13,
     "next": 13,
     "pending": true
-  }
+  },
+  "connection_mode": "test"
 }

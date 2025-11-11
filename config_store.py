@@ -15,6 +15,7 @@ DEFAULTS = {
     },
     "last_csv": "",
     "pattern": "",
+    "connection_mode": "test",  # "test" | "live"
 }
 
 def load_config() -> Dict[str, Any]:

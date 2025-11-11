@@ -17,7 +17,8 @@ import log_store as logs
 import secure_store as sstore  # already imported elsewhere
 # touching the master key + vault applies ACLs:
 # _ = sstore._get_master_key() # loads/creates and ACLs .vault/master.key
-
+import re 
+import datetime
 
 PARITY_MAP = {"N": "N", "E": "E", "O": "O"}
 STOPBITS_CHOICES = [0, 1]
@@ -184,6 +185,14 @@ class SettingsDialog(tk.Toplevel):
         ttk.Button(btns, text="Save", command=self._save).pack(side="left", padx=6)
         ttk.Button(btns, text="Cancel", command=self._close).pack(side="left", padx=6)
 
+        # Connection mode @TODO: Before love deployment env MUST be set to "live and Comment the checkbox below"
+        ttk.Label(frm, text="Connection mode").grid(row=4, column=0, sticky="e", pady=4, padx=4)
+        self.cb_mode = ttk.Combobox(frm, width=22, state="readonly",
+                                    values=["test", "live"])
+        self.cb_mode.set(cfg.get("connection_mode", "test"))
+        self.cb_mode.grid(row=4, column=1, sticky="w")
+
+
     def _save(self):
         s = self.cfg["serial"]
         s["port"] = self.cb_port.get().strip()
@@ -191,6 +200,7 @@ class SettingsDialog(tk.Toplevel):
         s["parity"] = self.cb_parity.get().strip()
         s["stopbits"] = int(self.cb_stop.get().strip() or "1")
         self.cfg["pattern"] = self.ent_pattern.get().strip()
+        self.cfg["connection_mode"] = self.cb_mode.get().strip()
         self.on_save(self.cfg)
         self._close()
 
@@ -485,6 +495,10 @@ class SimpleChangeRole(tk.Toplevel):
 class LogViewer(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
+        try:
+            self.geometry("1200x800"); self.minsize(900, 600)
+        except Exception:
+            pass
         self.title("Logs")
         self.resizable(True, True)
         self.transient(master)
@@ -492,56 +506,125 @@ class LogViewer(tk.Toplevel):
 
         outer = ttk.Frame(self, padding=12)
         outer.pack(fill="both", expand=True)
-        # Controls
-        bar = ttk.Frame(outer); bar.pack(fill="x", side="top")
-        ttk.Label(bar, text="Filter state:").pack(side="left")
-        self.cb_state = ttk.Combobox(bar, state="readonly", width=20,
-                                    values=[
-                                    "(all)",
-                                    "print started",
-                                    "print finished",
-                                    "data transferred",
-                                    "data partially transferred",
-                                    # NEW
-                                    "transfer paused",
-                                    "transfer stopped",
-                                    "printer did not acknowledge command",
-                                ],)
+
+        # ---------- ROW 1: State + Apply (search-only) + Tag + Search + Export/Clear ----------
+        bar1 = ttk.Frame(outer)
+        bar1.pack(fill="x", side="top")
+
+        ttk.Label(bar1, text="Filter state:").pack(side="left")
+        self.cb_state = ttk.Combobox(
+            bar1,
+            state="readonly",
+            width=20,
+            values=["(all)"],  # dynamic list is filled after load
+        )
         self.cb_state.set("(all)")
         self.cb_state.pack(side="left", padx=6)
-        ttk.Label(bar, text="Search:").pack(side="left", padx=(12, 4))
-        self.ent_search = ttk.Entry(bar, width=24); self.ent_search.pack(side="left")
-        # replace the buttons area with:
-        ttk.Button(bar, text="Apply", command=self._apply).pack(side="left", padx=6)
-        ttk.Button(bar, text="Export XLSX…", command=self._export).pack(side="left", padx=6)
-        ttk.Button(bar, text="Clear (archive)", command=self._clear_backup).pack(side="right")
+        self.cb_state.bind("<<ComboboxSelected>>", lambda _e=None: self._apply_filter())
 
 
-        # Table
-        frm = ttk.Frame(outer); frm.pack(fill="both", expand=True, pady=(8,0))
+        # Apply button (SEARCH ONLY)
+        ttk.Button(bar1, text="Apply", command=self._apply_search).pack(side="left", padx=6)
+
+        # Tag filter (auto-applies)
+        ttk.Label(bar1, text="Tag filter").pack(side="left", padx=(12, 4))
+        self._filter_var = tk.StringVar(value="(all)")
+        self._filter_cb = ttk.Combobox(
+            bar1, state="readonly", width=24,
+            textvariable=self._filter_var, values=["(all)"],  # filled after load
+        )
+        self._filter_cb.pack(side="left", padx=6)
+        self._filter_cb.bind("<<ComboboxSelected>>", lambda _e=None: self._apply_filter())
+
+        # Search (Apply affects this only)
+        ttk.Label(bar1, text="Search:").pack(side="left", padx=(12, 4))
+        self.ent_search = ttk.Entry(bar1, width=24)
+        self.ent_search.pack(side="left")
+
+        ttk.Button(bar1, text="Export XLSX…", command=self._export).pack(side="left", padx=6)
+        ttk.Button(bar1, text="Clear (archive)", command=self._clear_backup).pack(side="right")
+
+        # ---------- ROW 2: Date filter (mode + arrows + range + custom From/To) ----------
+        # requires: import datetime (top of file) and the helper methods you already added:
+        # _compute_range, _shift_anchor, _on_date_mode, _on_custom_dates_changed,
+        # _row_in_date_range, and that _apply_filter() considers date via _row_in_date_range().
+        bar2 = ttk.Frame(outer)
+        bar2.pack(fill="x", side="top", pady=(6, 0))
+
+        self._date_mode = tk.StringVar(value="(all)")          # "(all)" | "Day" | "Week" | "Custom"
+        self._date_label = tk.StringVar(value="")
+        self._anchor = datetime.date.today()                   # center day for Day/Week steps
+        self._date_start = None
+        self._date_end = None
+
+        ttk.Label(bar2, text="Interval:").pack(side="left", padx=(0, 4))
+        self.cb_date_mode = ttk.Combobox(
+            bar2, state="readonly", width=10,
+            values=["(all)", "Day", "Week", "Custom"],
+            textvariable=self._date_mode,
+        )
+        self.cb_date_mode.pack(side="left")
+        self.cb_date_mode.bind("<<ComboboxSelected>>", lambda _e=None: self._on_date_mode())
+
+        ttk.Button(bar2, text="<<", width=3, command=lambda: self._shift_anchor(-7)).pack(side="left", padx=2)
+        ttk.Button(bar2, text="<",  width=3, command=lambda: self._shift_anchor(-1)).pack(side="left", padx=2)
+        ttk.Label(bar2, textvariable=self._date_label).pack(side="left", padx=6)
+        ttk.Button(bar2, text=">",  width=3, command=lambda: self._shift_anchor(+1)).pack(side="left", padx=2)
+        ttk.Button(bar2, text=">>", width=3, command=lambda: self._shift_anchor(+7)).pack(side="left", padx=2)
+
+        ttk.Label(bar2, text="From").pack(side="left", padx=(12, 4))
+        self.ent_from = ttk.Entry(bar2, width=11)  # YYYY-MM-DD
+        self.ent_from.pack(side="left")
+        ttk.Label(bar2, text="To").pack(side="left", padx=(8, 4))
+        self.ent_to = ttk.Entry(bar2, width=11)
+        self.ent_to.pack(side="left")
+
+        self.ent_from.bind("<Return>", lambda _e=None: self._on_custom_dates_changed())
+        self.ent_to.bind("<Return>",   lambda _e=None: self._on_custom_dates_changed())
+
+        # ---------- Table ----------
+        frm = ttk.Frame(outer)
+        frm.pack(fill="both", expand=True, pady=(8, 0))
         frm.rowconfigure(0, weight=1); frm.columnconfigure(0, weight=1)
-        self.sheet = Sheet(frm, data=[], headers=["timestamp","user","state","row","line_content","error"],
-                           show_row_index=False, show_top_left_corner=False)
+
+        self.sheet = Sheet(
+            frm, data=[],
+            headers=["timestamp", "user", "state", "row", "line_content", "error"],
+            show_row_index=False, show_top_left_corner=False,
+        )
         self.sheet.grid(row=0, column=0, sticky="nsew")
         self.sheet.readonly = True
-        self.sheet.enable_bindings(("single_select","row_select","column_select",
-                                    "arrowkeys","drag_select","copy",
-                                    "column_width_resize","row_height_resize","sort"))
-        self._load()
+        self.sheet.enable_bindings((
+            "single_select","row_select","column_select","arrowkeys","drag_select","copy",
+            "column_width_resize","row_height_resize","sort"
+        ))
+
+        # Load, build tag list, init date range, show filtered view
+        self._load()                   # should set self._all_rows and call _rebuild_filter_options(...)
+        # If your _load() doesn't call these, ensure:
+        # self._date_mode.set("(all)"); self._compute_range(); self._apply_filter()
 
         self.update_idletasks()
         try:
             self.wait_visibility()
-            # center on parent (uses your helper if present)
             if 'center' in globals():
                 center(self)
         except Exception:
             pass
 
+
     def _load(self):
         rows = logs.read_all()
         self._all_rows = rows  # keep cache for filter
-        self._show(rows)
+        # Build choices dynamically from line_content and render table
+        self._rebuild_filter_options(rows)
+        self._rebuild_state_options(rows) 
+        # init date filter: default (all)
+        self._date_mode.set("(all)")
+        self._compute_range()
+
+        self._apply_filter()   # this calls _show(...) with the right subset
+        # self._show(rows)
 
     def _show(self, rows):
         headers = ["timestamp", "user", "state", "row", "line_content", "error"]
@@ -558,6 +641,176 @@ class LogViewer(tk.Toplevel):
         finally:
             self.sheet.refresh()
 
+    def _extract_tags(self, text: str) -> set[str]:
+        # everything between '[' and ']'
+        return set(re.findall(r"\[([^\[\]]+)\]", text or ""))
+    def _rebuild_filter_options(self, rows):
+        # collect unique [TAGS] from the "line_content" field of dict rows
+        tags = set()
+        for r in rows:
+            text = r.get("line_content", "") if isinstance(r, dict) else (r[4] if len(r) > 4 else "")
+            tags |= self._extract_tags(text)
+        items = ["(all)"] + sorted(tags, key=str.lower)
+        self._filter_cb["values"] = items
+        if self._filter_var.get() not in items:
+            self._filter_var.set("(all)")
+
+    def _apply_filter(self):
+        """Auto-apply for State / Tag / Date (Search stays Apply-only)."""
+        st  = self.cb_state.get().strip() if hasattr(self, "cb_state") else "(all)"
+        tag = self._filter_var.get().strip() if hasattr(self, "_filter_var") else "(all)"
+
+        def _state_ok(r):
+            return True if st == "(all)" else ((r.get("state", "") if isinstance(r, dict) else "") == st)
+
+        def _tag_ok(r):
+            if tag == "(all)":
+                return True
+            text = r.get("line_content", "") if isinstance(r, dict) else (r[4] if len(r) > 4 else "")
+            return tag in set(re.findall(r"\[([^\[\]]+)\]", text or ""))
+
+        rows = [r for r in getattr(self, "_all_rows", []) if _state_ok(r) and _tag_ok(r) and self._row_in_date_range(r)]
+        self._show(rows)
+
+    def _apply_search(self):
+        q = self.ent_search.get().strip().lower()
+        # start from the base (state+tag+date) view
+        st_view = []
+        st  = self.cb_state.get().strip() if hasattr(self, "cb_state") else "(all)"
+        tag = self._filter_var.get().strip() if hasattr(self, "_filter_var") else "(all)"
+        for r in getattr(self, "_all_rows", []):
+            if ( (st == "(all)" or (r.get("state","") == st)) and
+                (tag == "(all)" or tag in set(re.findall(r"\[([^\[\]]+)\]", (r.get("line_content","") or "")))) and
+                self._row_in_date_range(r) ):
+                st_view.append(r)
+        if q:
+            st_view = [r for r in st_view if q in ((r.get("line_content","") + " " + r.get("error","")).lower())]
+        self._show(st_view)
+
+    def _parse_timestamp(self, ts: str):
+        """Return datetime.date or None from 'timestamp' field."""
+        if not ts:
+            return None
+        ts = ts.strip()
+        # try common formats you use in logs.csv (extend if needed)
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
+                    "%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y.%m.%d"):
+            try:
+                return datetime.datetime.strptime(ts, fmt).date()
+            except Exception:
+                pass
+        # ISO-ish fallback
+        try:
+            return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+        except Exception:
+            return None
+
+    def _compute_range(self):
+        """Recompute _date_start/_date_end + label from mode/anchor/custom."""
+        mode = self._date_mode.get()
+        if mode == "(all)":
+            self._date_start = self._date_end = None
+            self._date_label.set("(all)")
+            # disable custom boxes
+            self.ent_from.configure(state="disabled")
+            self.ent_to.configure(state="disabled")
+            return
+
+        if mode == "Day":
+            d0 = self._anchor
+            d1 = self._anchor
+            self._date_start, self._date_end = d0, d1
+            self._date_label.set(d0.strftime("%Y-%m-%d"))
+            self.ent_from.configure(state="disabled")
+            self.ent_to.configure(state="disabled")
+            return
+
+        if mode == "Week":
+            # Monday..Sunday span around anchor (ISO week)
+            monday = self._anchor - datetime.timedelta(days=self._anchor.weekday())
+            sunday = monday + datetime.timedelta(days=6)
+            self._date_start, self._date_end = monday, sunday
+            self._date_label.set(f"{monday:%Y-%m-%d} .. {sunday:%Y-%m-%d}")
+            self.ent_from.configure(state="disabled")
+            self.ent_to.configure(state="disabled")
+            return
+
+        # Custom
+        self.ent_from.configure(state="normal")
+        self.ent_to.configure(state="normal")
+        # parse boxes; if empty, default to anchor..anchor
+        def _parse_box(e):
+            txt = e.get().strip()
+            if not txt:
+                return None
+            try:
+                return datetime.date.fromisoformat(txt)
+            except Exception:
+                return None
+        d0 = _parse_box(self.ent_from)
+        d1 = _parse_box(self.ent_to)
+        if not d0 and not d1:
+            d0 = d1 = self._anchor
+        elif d0 and not d1:
+            d1 = d0
+        elif d1 and not d0:
+            d0 = d1
+        if d0 > d1:
+            d0, d1 = d1, d0
+        self._date_start, self._date_end = d0, d1
+        self._date_label.set(f"{d0:%Y-%m-%d} .. {d1:%Y-%m-%d}")
+
+    def _on_date_mode(self):
+        """Mode changed: compute range and auto-apply (state+tag+date)."""
+        self._compute_range()
+        self._apply_filter()   # your existing auto-filter (state+tag already)
+
+    def _shift_anchor(self, delta_days: int):
+        """Move anchor by +/- days; applies only in Day/Week/Custom."""
+        mode = self._date_mode.get()
+        if mode == "(all)":
+            return  # arrows do nothing in (all)
+        # in Week mode, left/right arrows step 1 day; << >> step 7 — already passed in
+        self._anchor = self._anchor + datetime.timedelta(days=delta_days)
+        # if Custom and boxes filled, shift both by same delta
+        if mode == "Custom":
+            def _shift_box(e):
+                txt = e.get().strip()
+                if not txt:
+                    return
+                try:
+                    d = datetime.date.fromisoformat(txt)
+                    d2 = d + datetime.timedelta(days=delta_days)
+                    e.delete(0, "end")
+                    e.insert(0, d2.strftime("%Y-%m-%d"))
+                except Exception:
+                    pass
+            _shift_box(self.ent_from)
+            _shift_box(self.ent_to)
+        self._compute_range()
+        self._apply_filter()
+
+    def _on_custom_dates_changed(self):
+        """Enter pressed in From/To: recompute + apply."""
+        if self._date_mode.get() != "Custom":
+            return
+        self._compute_range()
+        self._apply_filter()
+
+    def _row_in_date_range(self, row) -> bool:
+        """True if row's timestamp is within current range (inclusive)."""
+        # (all) => no date filter
+        if self._date_start is None and self._date_end is None:
+            return True
+        ts = row.get("timestamp", "") if isinstance(row, dict) else (row[0] if row else "")
+        d = self._parse_timestamp(ts)
+        if not d:
+            return False
+        if self._date_start and d < self._date_start:
+            return False
+        if self._date_end and d > self._date_end:
+            return False
+        return True
 
 
     def _apply(self):
@@ -598,6 +851,19 @@ class LogViewer(tk.Toplevel):
                 messagebox.showinfo("Logs", "Log cleared (backup unavailable).")
         except Exception as e:
             messagebox.showerror("Logs", str(e))
+
+    def _rebuild_state_options(self, rows):
+        # rows are dicts: {"timestamp","user","state","row","line_content","error", ...}
+        states = set()
+        for r in rows:
+            if isinstance(r, dict):
+                s = (r.get("state") or "").strip()
+                if s:
+                    states.add(s)
+        items = ["(all)"] + sorted(states, key=str.lower)
+        self.cb_state["values"] = items
+        if self.cb_state.get() not in items:
+            self.cb_state.set("(all)")
 
 
 # -------------------- MAIN APP --------------------
@@ -972,6 +1238,41 @@ class App(tk.Tk):
                                 -1,
                                 f"{port}@{s.get('baud')} parity={s.get('parity')} stop={s.get('stopbits')}",
                                 None)
+                                # --- LIVE verification (optional) ---
+                mode = self.cfg.get("connection_mode", "test")  # default keeps old behavior
+                if mode == "live":
+                    ok, status, raw = self.dev.verify_live_connection(tries=2, sleep_ms=120)
+                    if not ok:
+                        # log and tear down if it's not actually the BM470 speaking Extended Protocol
+                        try:
+                            user = getattr(self.user, "username", "") if self.user else ""
+                            logs.append_event(
+                                user,
+                                "serial verification FAILED",
+                                -1,
+                                f"{port}@{s.get('baud')} parity={s.get('parity')} stop={s.get('stopbits')}",
+                                "no CR-terminated status"
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            self.dev.disconnect()
+                        except Exception:
+                            pass
+                        self.btn_connect["state"] = "normal"
+                        self.btn_disconnect["state"] = "disabled"
+                        self.btn_start["state"] = "disabled"
+                        self._set_status("Not connected")
+                        messagebox.showerror("Serial", "Printer did not respond to status poll.\nCheck cable/port and controller power.")
+                        return
+                    else:
+                        # optional: note successful live verification
+                        try:
+                            user = getattr(self.user, "username", "") if self.user else ""
+                            logs.append_event(user, "serial verified live", -1, status or "", None)
+                        except Exception:
+                            pass
+
             except Exception:
                 pass
         except Exception as e:
@@ -1161,7 +1462,7 @@ class App(tk.Tk):
 
                     try:
                         resp = self.dev.set_var(c, val)
-                        self.q.put(("log", f"V] var {c:02d} <- {val} | {self._short(resp)}"))
+                        self.q.put(("log", f"[V] var {c:02d} <- {val} | {self._short(resp)}"))
                         sent += 1
                     except Exception as e:
                         error_text = str(e)
