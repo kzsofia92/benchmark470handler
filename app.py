@@ -21,7 +21,9 @@ import re
 import datetime
 
 PARITY_MAP = {"N": "N", "E": "E", "O": "O"}
-STOPBITS_CHOICES = [0, 1]
+STOPBITS_CHOICES = [1, 2]
+DATABITS_CHOICES = [7, 8]
+
 # Row timeouts (seconds)
 READY_TIMEOUT_S = 10.0
 DONE_TIMEOUT_S  = 10.0
@@ -148,49 +150,65 @@ class SettingsDialog(tk.Toplevel):
         self.on_save = on_save
         self.cfg = cfg
         self.transient(master)
-        center(self)   
+        center(self)
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
         s = cfg["serial"]
-        frm = ttk.Frame(self, padding=12); frm.pack(fill="both", expand=True)
 
-        # Port
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+        frm.columnconfigure(0, weight=0)
+        frm.columnconfigure(1, weight=1)
+
+        # Row 0 — Port
         ttk.Label(frm, text="Port").grid(row=0, column=0, sticky="e", pady=4, padx=4)
-        self.cb_port = ttk.Combobox(frm, width=22, values=TMC470.list_ports(), state="readonly")
-        self.cb_port.set(s.get("port","") or (TMC470.list_ports()[0] if TMC470.list_ports() else ""))
-        self.cb_port.grid(row=0, column=1, sticky="w")
+        ports = TMC470.list_ports()
+        self.cb_port = ttk.Combobox(frm, width=22, values=ports, state="readonly")
+        self.cb_port.set(s.get("port", "") or (ports[0] if ports else ""))
+        self.cb_port.grid(row=0, column=1, sticky="we")
 
-        # Baud
+        # Row 1 — Baud
         ttk.Label(frm, text="Baud").grid(row=1, column=0, sticky="e", pady=4, padx=4)
-        self.ent_baud = ttk.Entry(frm, width=24); self.ent_baud.insert(0, str(s.get("baud", SERIAL_DEFAULTS["baudrate"])))
-        self.ent_baud.grid(row=1, column=1, sticky="w")
+        self.ent_baud = ttk.Entry(frm, width=24)
+        self.ent_baud.insert(0, str(s.get("baud", SERIAL_DEFAULTS["baudrate"])))
+        self.ent_baud.grid(row=1, column=1, sticky="we")
 
-        # Parity
+        # Row 2 — Parity
         ttk.Label(frm, text="Parity").grid(row=2, column=0, sticky="e", pady=4, padx=4)
         self.cb_parity = ttk.Combobox(frm, width=22, values=list(PARITY_MAP.keys()), state="readonly")
-        self.cb_parity.set(s.get("parity","N")); self.cb_parity.grid(row=2, column=1, sticky="w")
+        self.cb_parity.set(s.get("parity", "N"))
+        self.cb_parity.grid(row=2, column=1, sticky="we")
 
-        # Stop bits
+        # Row 3 — Stop bits (1/2)
         ttk.Label(frm, text="Stop bits").grid(row=3, column=0, sticky="e", pady=4, padx=4)
         self.cb_stop = ttk.Combobox(frm, width=22, values=[str(x) for x in STOPBITS_CHOICES], state="readonly")
-        self.cb_stop.set(str(s.get("stopbits", 1))); self.cb_stop.grid(row=3, column=1, sticky="w")
+        self.cb_stop.set(str(s.get("stopbits", 1)))
+        self.cb_stop.grid(row=3, column=1, sticky="we")
 
-        # Pattern default
-        ttk.Label(frm, text="Default pattern").grid(row=4, column=0, sticky="e", pady=4, padx=4)
-        self.ent_pattern = ttk.Entry(frm, width=24); self.ent_pattern.insert(0, cfg.get("pattern",""))
-        self.ent_pattern.grid(row=4, column=1, sticky="w")
+        # Row 4 — Data bits (7/8)  **FIXED: correct choices**
+        ttk.Label(frm, text="Data bits").grid(row=4, column=0, sticky="e", pady=4, padx=4)
+        self.cb_data = ttk.Combobox(frm, width=22, values=[str(x) for x in DATABITS_CHOICES], state="readonly")
+        self.cb_data.set(str(s.get("databits", 8)))
+        self.cb_data.grid(row=4, column=1, sticky="we")
 
-        btns = ttk.Frame(frm); btns.grid(row=5, column=0, columnspan=2, pady=8)
+        # Row 5 — Default pattern
+        ttk.Label(frm, text="Default pattern").grid(row=5, column=0, sticky="e", pady=4, padx=4)
+        self.ent_pattern = ttk.Entry(frm, width=24)
+        self.ent_pattern.insert(0, cfg.get("pattern", ""))
+        self.ent_pattern.grid(row=5, column=1, sticky="we")
+
+        # Row 6 — Connection mode (moved to its own row; comment typo fixed)
+        ttk.Label(frm, text="Connection mode").grid(row=6, column=0, sticky="e", pady=4, padx=4)
+        self.cb_mode = ttk.Combobox(frm, width=22, state="readonly", values=["test", "live"])
+        self.cb_mode.set(cfg.get("connection_mode", "test"))
+        self.cb_mode.grid(row=6, column=1, sticky="we")
+
+        # Row 7 — Buttons
+        btns = ttk.Frame(frm)
+        btns.grid(row=7, column=0, columnspan=2, pady=10)
         ttk.Button(btns, text="Save", command=self._save).pack(side="left", padx=6)
         ttk.Button(btns, text="Cancel", command=self._close).pack(side="left", padx=6)
-
-        # Connection mode @TODO: Before love deployment env MUST be set to "live and Comment the checkbox below"
-        ttk.Label(frm, text="Connection mode").grid(row=4, column=0, sticky="e", pady=4, padx=4)
-        self.cb_mode = ttk.Combobox(frm, width=22, state="readonly",
-                                    values=["test", "live"])
-        self.cb_mode.set(cfg.get("connection_mode", "test"))
-        self.cb_mode.grid(row=4, column=1, sticky="w")
 
 
     def _save(self):
@@ -199,6 +217,7 @@ class SettingsDialog(tk.Toplevel):
         s["baud"] = int(self.ent_baud.get().strip() or "9600")
         s["parity"] = self.cb_parity.get().strip()
         s["stopbits"] = int(self.cb_stop.get().strip() or "1")
+        s["databits"] = int(self.cb_data.get().strip() or "8")
         self.cfg["pattern"] = self.ent_pattern.get().strip()
         self.cfg["connection_mode"] = self.cb_mode.get().strip()
         self.on_save(self.cfg)
@@ -523,9 +542,7 @@ class LogViewer(tk.Toplevel):
         self.cb_state.bind("<<ComboboxSelected>>", lambda _e=None: self._apply_filter())
 
 
-        # Apply button (SEARCH ONLY)
-        ttk.Button(bar1, text="Apply", command=self._apply_search).pack(side="left", padx=6)
-
+ 
         # Tag filter (auto-applies)
         ttk.Label(bar1, text="Tag filter").pack(side="left", padx=(12, 4))
         self._filter_var = tk.StringVar(value="(all)")
@@ -540,6 +557,9 @@ class LogViewer(tk.Toplevel):
         ttk.Label(bar1, text="Search:").pack(side="left", padx=(12, 4))
         self.ent_search = ttk.Entry(bar1, width=24)
         self.ent_search.pack(side="left")
+        
+        # Apply button (SEARCH ONLY)
+        ttk.Button(bar1, text="Apply", command=self._apply_search).pack(side="left", padx=6)
 
         ttk.Button(bar1, text="Export XLSX…", command=self._export).pack(side="left", padx=6)
         ttk.Button(bar1, text="Clear (archive)", command=self._clear_backup).pack(side="right")
@@ -575,12 +595,45 @@ class LogViewer(tk.Toplevel):
         ttk.Label(bar2, text="From").pack(side="left", padx=(12, 4))
         self.ent_from = ttk.Entry(bar2, width=11)  # YYYY-MM-DD
         self.ent_from.pack(side="left")
+
         ttk.Label(bar2, text="To").pack(side="left", padx=(8, 4))
         self.ent_to = ttk.Entry(bar2, width=11)
         self.ent_to.pack(side="left")
 
+        # keep your Enter-to-apply
         self.ent_from.bind("<Return>", lambda _e=None: self._on_custom_dates_changed())
         self.ent_to.bind("<Return>",   lambda _e=None: self._on_custom_dates_changed())
+
+        # NEW: per-field keypress handlers (no StringVar traces)
+        self.ent_from.bind("<KeyPress>", lambda e: self._on_date_key(e, self.ent_from))
+        self.ent_to.bind("<KeyPress>",   lambda e: self._on_date_key(e, self.ent_to))
+
+        # Optional: tidy on focus out (does not fight typing)
+        self.ent_from.bind("<FocusOut>", lambda _e=None: self._normalize_date_field(self.ent_from))
+        self.ent_to.bind("<FocusOut>",   lambda _e=None: self._normalize_date_field(self.ent_to))
+
+        # Key typing (you already added these)
+        self.ent_from.bind("<KeyPress>", lambda e: self._on_date_key(e, self.ent_from))
+        self.ent_to.bind("<KeyPress>",   lambda e: self._on_date_key(e, self.ent_to))
+
+        # Enter -> apply (you already have)
+        self.ent_from.bind("<Return>", lambda _e=None: self._on_custom_dates_changed())
+        self.ent_to.bind("<Return>",   lambda _e=None: self._on_custom_dates_changed())
+
+        # Paste sanitize (Ctrl+V, Shift+Insert, menu paste)
+        self.ent_from.bind("<<Paste>>",   lambda e: self._on_date_paste(e, self.ent_from))
+        self.ent_from.bind("<Control-v>", lambda e: self._on_date_paste(e, self.ent_from))
+        self.ent_from.bind("<Shift-Insert>", lambda e: self._on_date_paste(e, self.ent_from))
+
+        self.ent_to.bind("<<Paste>>",   lambda e: self._on_date_paste(e, self.ent_to))
+        self.ent_to.bind("<Control-v>", lambda e: self._on_date_paste(e, self.ent_to))
+        self.ent_to.bind("<Shift-Insert>", lambda e: self._on_date_paste(e, self.ent_to))
+
+        # Hard validation (rejects invalid edits even if injected)
+        vc_from = (self.register(self._vc_date), "%P")
+        vc_to   = (self.register(self._vc_date), "%P")
+        self.ent_from.configure(validate="key", validatecommand=vc_from)
+        self.ent_to.configure(validate="key",   validatecommand=vc_to)
 
         # ---------- Table ----------
         frm = ttk.Frame(outer)
@@ -864,6 +917,198 @@ class LogViewer(tk.Toplevel):
         self.cb_state["values"] = items
         if self.cb_state.get() not in items:
             self.cb_state.set("(all)")
+    def _mask_date_text(self, raw: str) -> str:
+        """Return text formatted as YYYY-MM-DD from arbitrary input; allow partials."""
+        digits = "".join(ch for ch in (raw or "") if ch.isdigit())[:8]  # up to YYYYMMDD
+        y = digits[0:4]
+        m = digits[4:6]
+        d = digits[6:8]
+        if len(digits) <= 4:
+            return y
+        if len(digits) <= 6:
+            return f"{y}-{m}"
+        return f"{y}-{m}-{d}"
+
+    def _digits_only(self, s: str) -> str:
+        return "".join(ch for ch in (s or "") if ch.isdigit())
+
+    def _format_digits_ymd(self, digits: str) -> str:
+        d = digits[:8]
+        y, m, d2 = d[0:4], d[4:6], d[6:8]
+        if len(d) <= 4:  return y
+        if len(d) <= 6:  return f"{y}-{m}"
+        return f"{y}-{m}-{d2}"
+
+    def _normalize_date_field(self, entry: ttk.Entry):
+        # On focus out: coerce to canonical YYYY-MM-DD if possible; leave partials as-is
+        raw = entry.get()
+        digits = self._digits_only(raw)
+        if not digits:
+            return
+        entry.delete(0, "end")
+        entry.insert(0, self._format_digits_ymd(digits))
+
+    def _on_date_key(self, e, entry: ttk.Entry):
+        """
+        Intercept typing:
+        - Allow digits; auto-insert '-' at positions 4 and 7.
+        - Allow '-' only at positions 4 or 7.
+        - Handle BackSpace/Delete across '-' nicely.
+        - Block overflow beyond YYYY-MM-DD.
+        Return "break" to stop Tk default insertion when we insert ourselves.
+        """
+        ks = e.keysym
+        ch = e.char
+
+        # navigation & tabbing unchanged
+        if ks in ("Left","Right","Home","End","Tab","Shift_L","Shift_R","Control_L","Control_R"):
+            return
+
+        # allow BackSpace/Delete with dash-skip behavior
+        if ks == "BackSpace":
+            idx = entry.index("insert")
+            if idx > 0:
+                # if cursor is just after a '-', erase the '-' first
+                if entry.get()[idx-1:idx] == "-":
+                    entry.delete(idx-1)
+                    return "break"
+            return  # default backspace after our dash handling
+        if ks == "Delete":
+            idx = entry.index("insert")
+            text = entry.get()
+            if idx < len(text) and text[idx:idx+1] == "-":
+                entry.delete(idx)
+                return "break"
+            return  # default delete
+
+        # handle digits
+        if ch.isdigit():
+            # maximum 8 digits (YYYYMMDD)
+            if len(self._digits_only(entry.get())) >= 8:
+                return "break"
+            idx = entry.index("insert")
+            # insert dash at 4 or 7 before digit if cursor is at those positions
+            if idx in (4, 7):
+                entry.insert(idx, "-")
+                idx += 1
+                entry.icursor(idx)
+            entry.insert(idx, ch)
+            entry.icursor(idx + 1)
+            return "break"
+
+        # handle '-' explicitly: only at positions 4 or 7 and not duplicated
+        if ch == "-":
+            idx = entry.index("insert")
+            if idx in (4, 7):
+                text = entry.get()
+                if not (idx < len(text) and text[idx] == "-"):
+                    entry.insert(idx, "-")
+                    entry.icursor(idx + 1)
+                # if a dash is already there, just move past it
+                else:
+                    entry.icursor(idx + 1)
+                return "break"
+            return "break"  # disallow dash elsewhere
+
+        # block everything else
+        return "break"
+    
+    def _digits_only(self, s: str) -> str:
+        return "".join(ch for ch in (s or "") if ch.isdigit())
+
+    def _format_digits_ymd(self, digits: str) -> str:
+        d = (digits or "")[:8]
+        y, m, d2 = d[0:4], d[4:6], d[6:8]
+        if len(d) <= 4:
+            return y
+        if len(d) <= 6:
+            return f"{y}-{m}"
+        return f"{y}-{m}-{d2}"
+
+    def _is_real_date(self, s: str) -> bool:
+        # Accept only full YYYY-MM-DD here
+        if len(s) != 10 or s[4] != "-" or s[7] != "-":
+            return False
+        y, m, d = s[0:4], s[5:7], s[8:10]
+        if not (y.isdigit() and m.isdigit() and d.isdigit()):
+            return False
+        try:
+            import datetime
+            datetime.date(int(y), int(m), int(d))
+            return True
+        except Exception:
+            return False
+
+    def _vc_date(self, proposed: str) -> bool:
+        """
+        Tk validatecommand for date entries: allow only
+        - empty or partial 'YYYY', 'YYYY-MM', 'YYYY-MM-DD'
+        - '-' only at positions 4 and 7
+        - at full length, it must be a real calendar date
+        """
+        if proposed == "":
+            return True
+        # length cap
+        if len(proposed) > 10:
+            return False
+        # allowed chars and positions
+        for i, ch in enumerate(proposed):
+            if ch == "-":
+                if i not in (4, 7):
+                    return False
+            elif not ch.isdigit():
+                return False
+        # don't allow too-short segments like 'YYYY-' (OK) but block 'YYYY-M-'
+        if len(proposed) >= 5 and proposed[4] != "-":
+            return False
+        if len(proposed) >= 8 and proposed[7] != "-":
+            return False
+        # basic month/day bounds on partials (so '2025-19' is rejected)
+        parts = proposed.split("-")
+        if len(parts) >= 2 and parts[1]:
+            mm = parts[1]
+            if not mm.isdigit() or not (1 <= int(mm) <= 12):
+                # allow partial month like '2' or '0' while typing first char
+                if not (len(mm) == 1 and mm in "01"):
+                    return False
+        if len(parts) == 3 and parts[2]:
+            dd = parts[2]
+            # allow '0'..'3' for first digit while typing
+            if not dd.isdigit():
+                return False
+            # if full date len==10, require real calendar date
+            if len(proposed) == 10:
+                if not self._is_real_date(proposed):
+                    return False
+            else:
+                # partial day sanity: 1..31 with len 1..2
+                if len(dd) == 1 and dd not in "0123":
+                    return False
+                if len(dd) == 2 and not (1 <= int(dd) <= 31):
+                    return False
+        return True
+
+    def _on_date_paste(self, e, entry):
+        """Sanitize pasted content into YYYY-MM-DD (or best partial)."""
+        try:
+            txt = self.clipboard_get()
+        except Exception:
+            return "break"
+        digits = self._digits_only(txt)
+        if not digits:
+            return "break"
+        formatted = self._format_digits_ymd(digits)
+        # If full length, enforce real date; else allow partial
+        if len(formatted) == 10 and not self._is_real_date(formatted):
+            # try trimming to a valid partial (YYYY-MM or YYYY)
+            if len(digits) >= 6:
+                formatted = f"{digits[:4]}-{digits[4:6]}"
+            else:
+                formatted = digits[:4]
+        entry.delete(0, "end")
+        entry.insert(0, formatted)
+        entry.icursor("end")
+        return "break"
 
 
 # -------------------- MAIN APP --------------------
@@ -1212,31 +1457,43 @@ class App(tk.Tk):
 
     # ---------- SERIAL ----------
     def _connect(self):
-        s = self.cfg["serial"]
-        port = s.get("port","")
+        serial_config = self.cfg["serial"]
+        port = serial_config.get("port","")
         if not port:
             messagebox.showerror("Serial", "Admin must set Port in Settings first.")
             return
         kwargs = {
-            "baudrate": int(s.get("baud", 9600)),
-            "parity":   {"N": "N", "E": "E", "O": "O"}[s.get("parity","N")],
-            "stopbits": int(s.get("stopbits", 1)),
+            "baudrate": int(serial_config.get("baud", 9600)),
+            "parity":   {"N": "N", "E": "E", "O": "O"}[serial_config.get("parity","N")],
+            "stopbits": int(serial_config.get("stopbits", 1)),
+            "bytesize": int(serial_config.get("databits", 8)),
+
         }
-        from serial import PARITY_NONE, PARITY_EVEN, PARITY_ODD, STOPBITS_ONE, STOPBITS_TWO
-        kwargs["parity"] = {"N": PARITY_NONE, "E": PARITY_EVEN, "O": PARITY_ODD}[kwargs["parity"]]
-        kwargs["stopbits"] = {0: STOPBITS_ONE, 1: STOPBITS_TWO}[kwargs["stopbits"]]
+        from serial import (
+            PARITY_NONE, PARITY_EVEN, PARITY_ODD,
+            STOPBITS_ONE, STOPBITS_TWO,
+            SEVENBITS, EIGHTBITS,
+        )
+
+        kwargs = {
+            "baudrate": int(serial_config.get("baud", 9600)),
+            "parity":   {"N": PARITY_NONE, "E": PARITY_EVEN, "O": PARITY_ODD}[serial_config.get("parity","N")],
+            "stopbits": {1: STOPBITS_ONE, 2: STOPBITS_TWO}[int(serial_config.get("stopbits", 1))],
+            "bytesize": {7: SEVENBITS, 8: EIGHTBITS}[int(serial_config.get("databits", 8))],  # NEW
+        }
+
         try:
             self.dev.connect(port, **kwargs)
             self._set_status(f"Connected {port} @ {self.cfg['serial']['baud']}")
             self.btn_connect["state"] = "disabled"; self.btn_disconnect["state"] = "normal"
             self._update_start_enabled()
             # after successful connect
-            self._audit("serial connect", f"port={port}; baud={kwargs['baudrate']}; parity={self.cfg['serial'].get('parity')}; stopbits={self.cfg['serial'].get('stopbits')}")
+            self._audit("serial connect", f"port={port}; baud={kwargs['baudrate']}; parity={self.cfg['serial'].get('parity')}; stopbits={self.cfg['serial'].get('stopbits')}; bytesize={self.cfg['serial'].get('databits')}")
             try:
                 logs.append_event(getattr(self.user,"username",""),
                                 "serial connected",
                                 -1,
-                                f"{port}@{s.get('baud')} parity={s.get('parity')} stop={s.get('stopbits')}",
+                                f"{port}@{serial_config.get('baud')} parity={serial_config.get('parity')} stop={serial_config.get('stopbits')} bytesize={serial_config.get('databits')}",
                                 None)
                                 # --- LIVE verification (optional) ---
                 mode = self.cfg.get("connection_mode", "test")  # default keeps old behavior
@@ -1250,7 +1507,7 @@ class App(tk.Tk):
                                 user,
                                 "serial verification FAILED",
                                 -1,
-                                f"{port}@{s.get('baud')} parity={s.get('parity')} stop={s.get('stopbits')}",
+                                f"{port}@{serial_config.get('baud')} parity={serial_config.get('parity')} stop={serial_config.get('stopbits')} bytesize={serial_config.get('databits')}",
                                 "no CR-terminated status"
                             )
                         except Exception:

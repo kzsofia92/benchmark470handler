@@ -11,7 +11,8 @@ DEFAULTS = {
         "port": "",
         "baud": 9600,
         "parity": "N",   # N, E, O
-        "stopbits": 1, # 1, 0
+        "stopbits": 1, # 1, 2
+        "databits": 8, 
     },
     "last_csv": "",
     "pattern": "",

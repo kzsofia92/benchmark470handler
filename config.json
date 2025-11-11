@@ -3,14 +3,15 @@
     "port": "COM1",
     "baud": 9600,
     "parity": "N",
-    "stopbits": 0
+    "stopbits": 1,
+    "databits": 8
   },
   "last_csv": "C:/Users/Logisztika/Documents/bigtest.log.csv",
-  "pattern": "",
+  "pattern": "test",
   "resume": {
     "path": "C:/Users/Logisztika/Documents/bigtest.log.csv",
-    "highlight": 13,
-    "next": 13,
+    "highlight": 14,
+    "next": 14,
     "pending": true
   },
   "connection_mode": "test"
