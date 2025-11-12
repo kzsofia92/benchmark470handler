@@ -20,6 +20,30 @@ import secure_store as sstore  # already imported elsewhere
 import re 
 import datetime
 
+# app.py (add this near the top)
+from pathlib import Path
+import shutil, glob
+from path_helpers import resource_path, user_config_dir, user_log_dir
+
+APP = "BMarkTMC"
+_cfg = user_config_dir(APP); _cfg.mkdir(parents=True, exist_ok=True)
+_logs = user_log_dir(APP);   _logs.mkdir(parents=True, exist_ok=True)
+
+# copy defaults if missing
+for name in ("config.json", "users.json"):
+    dst = _cfg / name
+    if not dst.exists():
+        shutil.copyfile(resource_path(name), dst)
+
+# bring shipped logs once (don’t overwrite)
+for f in ["logs.csv", *glob.glob(resource_path("logs-*.csv"))]:
+    p = Path(f)
+    if p.exists():
+        dst = _logs / p.name
+        if not dst.exists():
+            shutil.copyfile(p, dst)
+
+
 PARITY_MAP = {"N": "N", "E": "E", "O": "O"}
 STOPBITS_CHOICES = [1, 2]
 DATABITS_CHOICES = [7, 8]
@@ -92,6 +116,93 @@ def center_on_parent(win, parent=None):
 
     win.geometry(f"+{x}+{y}")
 
+def fit_sheet_fullwidth(sheet, min_px=60, max_px=700, pad_px=0):
+    """
+    1) Size columns to content (if not done yet)
+    2) Clamp each column (min/max)
+    3) Distribute the delta so total width == available width
+       (handles both expand and shrink)
+    4) Subtracts visible vertical scrollbar + borders so no H-scrollbar appears
+    """
+    try:
+        # 0) let tksheet set content widths if caller hasn't yet
+        try:
+            sheet.set_all_cell_sizes_to_text(redraw=False)
+        except Exception:
+            pass
+
+        # 1) current widths
+        try:
+            widths = list(sheet.get_column_widths())
+        except Exception:
+            widths = []
+        if not widths:
+            return
+
+        # 2) clamp
+        widths = [max(min_px, min(max_px, w + pad_px)) for w in widths]
+
+        # 3) compute available width in the drawing area
+        #    subtract vertical scrollbar if it's shown + widget borders
+        sbw = 0
+        try:
+            if getattr(sheet, "v_scrollbar", None) and sheet.v_scrollbar.winfo_ismapped():
+                sbw = sheet.v_scrollbar.winfo_width()
+        except Exception:
+            sbw = 0
+        try:
+            border = int(sheet.cget("bd") or 0)
+        except Exception:
+            border = 0
+
+        avail = sheet.winfo_width() - sbw - (2 * border) - 2
+        avail = max(0, avail)
+
+        # 4) distribute delta (expand or shrink) so sum(widths) == avail
+        cur = sum(widths)
+        delta = avail - cur
+        n = len(widths)
+        if n == 0:
+            return
+
+        if delta != 0:
+            step = int(delta // n)   # can be negative
+            rem  = int(abs(delta) % n)
+            sign = 1 if delta > 0 else -1
+
+            for i in range(n):
+                widths[i] += step
+            # spread remainder from left
+            for i in range(rem):
+                widths[i] += sign
+
+            # if shrinking pushed a col below min_px, pull it back up and
+            # balance from the right to keep total ≤ avail (safety)
+            total = sum(widths)
+            if total > avail:
+                over = total - avail
+                i = n - 1
+                while over > 0 and i >= 0:
+                    take = min(over, max(0, widths[i] - min_px))
+                    widths[i] -= take
+                    over -= take
+                    i -= 1
+
+        # 5) apply
+        for c, w in enumerate(widths):
+            try:
+                sheet.column_width(c, max(min_px, w), only_set_if_too_small=False)
+            except Exception:
+                pass
+
+        try:
+            sheet.redraw()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 # -------------------- LOGIN --------------------
 class Login(tk.Toplevel):
     def __init__(self, master, on_login):
@@ -111,18 +222,22 @@ class Login(tk.Toplevel):
         self.ent_u = ttk.Entry(frm, width=24)
         self.ent_p = ttk.Entry(frm, width=24, show="*")
         self.ent_u.grid(row=0, column=1); self.ent_p.grid(row=1, column=1)
+        # Focus username after the dialog is idle/visible
 
         ttk.Button(frm, text="Sign in", command=self._try_login).grid(row=2, column=0, columnspan=2, pady=8)
 
-        self.bind("<Return>", lambda e: self._try_login())
-        self.update_idletasks()
-        self.ent_u.focus_set()
 
         center(self)          # center after widgets exist
         self.lift()           # raise above parent
         self.attributes("-topmost", True)   # ensure on top NOW
         self.after(0, lambda: self.attributes("-topmost", False))  # then release topmost so other dialogs can be on top later
         self.grab_set()
+
+        
+        self.bind("<Return>", lambda e: self._try_login())
+        self.update_idletasks()
+        self.ent_u.focus_set()
+        self.after_idle(lambda: (self.ent_u.focus_set(), self.ent_u.icursor("end")))
 
 
     def _try_login(self):
@@ -561,7 +676,7 @@ class LogViewer(tk.Toplevel):
         # Apply button (SEARCH ONLY)
         ttk.Button(bar1, text="Apply", command=self._apply_search).pack(side="left", padx=6)
 
-        ttk.Button(bar1, text="Export XLSX…", command=self._export).pack(side="left", padx=6)
+        ttk.Button(bar1, text="Export XLSX…", command=self._handle_export).pack(side="left", padx=6)
         ttk.Button(bar1, text="Clear (archive)", command=self._clear_backup).pack(side="right")
 
         # ---------- ROW 2: Date filter (mode + arrows + range + custom From/To) ----------
@@ -639,19 +754,29 @@ class LogViewer(tk.Toplevel):
         frm = ttk.Frame(outer)
         frm.pack(fill="both", expand=True, pady=(8, 0))
         frm.rowconfigure(0, weight=1); frm.columnconfigure(0, weight=1)
-
+        frm.pack(fill="both", expand=True) 
+        
         self.sheet = Sheet(
             frm, data=[],
             headers=["timestamp", "user", "state", "row", "line_content", "error"],
             show_row_index=False, show_top_left_corner=False,
         )
+        # --- sorting state + header click binding ---
+        self._sort_col = None
+        self._sort_asc = True
+        self.sheet.extra_bindings([("header_left_click", self._on_header_click)])
+
         self.sheet.grid(row=0, column=0, sticky="nsew")
+        self.sheet.bind("<Configure>", lambda e: fit_sheet_fullwidth(self.sheet))
+#                 ^ ‘self’ here is your Tk app (no _fit_sheet_fullwidth attr)
+
+
         self.sheet.readonly = True
         self.sheet.enable_bindings((
             "single_select","row_select","column_select","arrowkeys","drag_select","copy",
             "column_width_resize","row_height_resize","sort"
         ))
-
+        self.sheet.pack(fill="both", expand=True)
         # Load, build tag list, init date range, show filtered view
         self._load()                   # should set self._all_rows and call _rebuild_filter_options(...)
         # If your _load() doesn't call these, ensure:
@@ -665,7 +790,125 @@ class LogViewer(tk.Toplevel):
         except Exception:
             pass
 
+    def _on_header_click(self, event):
+        """
+        tksheet sends dict-like event: {'column': int, ...}
+        Toggle asc/desc on repeated clicks; otherwise sort asc first time.
+        """
+        try:
+            col = event.get("column", None)
+        except Exception:
+            col = None
+        if col is None:
+            return
+        if self._sort_col == col:
+            self._sort_asc = not self._sort_asc
+        else:
+            self._sort_col = col
+            self._sort_asc = True
+        self._sort_by(self._sort_col, self._sort_asc)
 
+    def _sort_by(self, col: int, asc: bool):
+        """
+        Sorts the table by column index `col`, ascending or descending.
+        Handles timestamp column intelligently; falls back to string compare.
+        Updates header with ▲ / ▼ on the active column.
+        """
+        # get current data from the sheet (what you see)
+        try:
+            rows = self.sheet.get_sheet_data()
+        except Exception:
+            rows = []
+
+        # choose key function
+        def keyfunc(r):
+            try:
+                val = r[col]
+            except Exception:
+                return ""
+            # try parse timestamp if this looks like the ts column
+            if col == 0:
+                dt = self._parse_any_datetime(val)
+                if dt is not None:
+                    return dt
+            # numeric fallback
+            try:
+                return float(str(val).replace(",", "."))
+            except Exception:
+                return str(val)
+
+        rows_sorted = sorted(rows, key=keyfunc, reverse=not asc)
+        # update sheet
+        try:
+            self.sheet.set_sheet_data(rows_sorted, redraw=True)
+        except Exception:
+            # old tksheet
+            self.sheet.set_sheet_data(rows_sorted)
+            self.sheet.redraw()
+
+        # update header arrow
+        self._set_headers_with_arrow(col, asc)
+
+    def _set_headers_with_arrow(self, col: int, asc: bool):
+        """
+        Writes headers with ▲ / ▼ on the active column.
+        Preserves original header titles if you have them cached.
+        """
+        # get original headers, or read current then strip old arrows
+        base_headers = []
+        try:
+            hdrs = getattr(self.sheet, "headers", None)
+            base_headers = list(hdrs()) if callable(hdrs) else list(hdrs) if hdrs else []
+        except Exception:
+            pass
+        if not base_headers:
+            # infer from what the sheet currently shows
+            try:
+                base_headers = list(self.sheet.headers())
+            except Exception:
+                base_headers = ["timestamp","user","state","row","line_content","error"]
+
+        cleaned = []
+        for h in base_headers:
+            s = str(h)
+            # remove any existing arrow suffixes
+            if s.endswith(" ▲") or s.endswith(" ▼"):
+                s = s[:-2]
+            cleaned.append(s)
+
+        # add arrow to active column
+        arrow = "▲" if asc else "▼"
+        if 0 <= col < len(cleaned):
+            cleaned[col] = f"{cleaned[col]} {arrow}"
+
+        try:
+            self.sheet.headers(cleaned)
+        except Exception:
+            # some versions expose setter differently
+            try:
+                self.sheet.set_headers(cleaned)
+            except Exception:
+                pass
+
+    def _parse_any_datetime(self, s):
+        """
+        Robust timestamp parser for your logs:
+        supports 'YYYY-MM-DD HH:MM:SS', 'YYYY.MM.DD HH:MM:SS', and ISO with 'T'.
+        Returns a datetime or None.
+        """
+        from datetime import datetime
+        txt = str(s).strip()
+        fmts = ("%Y-%m-%d %H:%M:%S",
+                "%Y.%m.%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S")
+        for f in fmts:
+            try:
+                return datetime.strptime(txt, f)
+            except Exception:
+                continue
+        return None
+
+    
     def _load(self):
         rows = logs.read_all()
         self._all_rows = rows  # keep cache for filter
@@ -677,6 +920,11 @@ class LogViewer(tk.Toplevel):
         self._compute_range()
 
         self._apply_filter()   # this calls _show(...) with the right subset
+
+        # default: newest first by timestamp (column 0, descending)
+        self._sort_col, self._sort_asc = 0, False
+        self._sort_by(0, asc=False)
+
         # self._show(rows)
 
     def _show(self, rows):
@@ -684,15 +932,19 @@ class LogViewer(tk.Toplevel):
         self.sheet.headers(headers)
         data = [[r.get(h, "") for h in headers] for r in rows]
         self.sheet.set_sheet_data(data or [])
+        # 1) let tksheet compute content-based widths
         try:
             self.sheet.set_all_cell_sizes_to_text(redraw=False)
-            # clamp widths (tksheet exposes get_column_widths(), not get_column_width)
-            widths = self.sheet.get_column_widths()  # list[int]
-            max_px = 600
-            clamped = [min(w, max_px) for w in widths]
-            self.sheet.set_column_widths(clamped)
-        finally:
+        except Exception:
+            pass
+        # 2) now fill remaining space across columns
+        fit_sheet_fullwidth(self.sheet)
+        try:
             self.sheet.refresh()
+        except Exception:
+            pass
+
+   
 
     def _extract_tags(self, text: str) -> set[str]:
         # everything between '[' and ']'
@@ -864,7 +1116,148 @@ class LogViewer(tk.Toplevel):
         if self._date_end and d > self._date_end:
             return False
         return True
+    def _handle_export(self):
+        """
+            Always ask: Yes = Filtered, No = Full, Cancel = Abort (nice layout, even buttons).
+        """
+        choice = self._ask_export_choice()  # 'filtered' | 'full' | None
+        if choice is None:
+            return
+        if choice == "filtered":
+            return self._export_filtered_xlsx()
+        return self._export()   # full, your existing XLSX export
 
+    def _ask_export_choice(self):
+        """
+        White dialog, message centered both horizontally and vertically.
+        Buttons: Yes (left) • No (center) • Cancel (right).
+        Returns: 'filtered' | 'full' | None
+        """
+        import tkinter as tk
+        from tkinter import ttk
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Export logs")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+        dlg.configure(bg="white")
+
+        # center on parent
+        self.update_idletasks()
+        px = self.winfo_rootx() + self.winfo_width() // 2
+        py = self.winfo_rooty() + self.winfo_height() // 2
+        w, h = 420, 180
+        dlg.geometry(f"{w}x{h}+{px - w//2}+{py - h//2}")
+
+        # content area (white) that will hold the vertically centered message
+        content = tk.Frame(dlg, bg="white")
+        content.pack(fill="both", expand=True, padx=16, pady=(12, 0))
+
+        # message centered H+V using place()
+        msg = tk.Label(
+            content,
+            text="Export the currently visible (filtered) rows?",
+            bg="white", fg="#1f1f1f",
+            justify="center", wraplength=380
+        )
+        msg.place(relx=0.5, rely=0.5, anchor="center")  # <-- perfect center
+
+        # button bar at the bottom
+        btnbar = tk.Frame(dlg, bg="white")
+        btnbar.pack(fill="x", side="bottom", padx=12, pady=12)
+
+        # 3 equal columns; left/center/right alignment via sticky
+        btnbar.grid_columnconfigure(0, weight=1, uniform="btns")
+        btnbar.grid_columnconfigure(1, weight=1, uniform="btns")
+        btnbar.grid_columnconfigure(2, weight=1, uniform="btns")
+
+        choice = {"val": None}
+        def _yes():    choice["val"] = "filtered"; dlg.destroy()
+        def _no():     choice["val"] = "full";     dlg.destroy()
+        def _cancel(): choice["val"] = None;       dlg.destroy()
+
+        ttk.Button(btnbar, text="Yes = Export filtered",    command=_yes).grid(   row=0, column=0, sticky="w", padx=6)
+        ttk.Button(btnbar, text="No = Export full",     command=_no).grid(    row=0, column=1, sticky="",  padx=6)
+        ttk.Button(btnbar, text="Cancel = Abort", command=_cancel).grid(row=0, column=2, sticky="e", padx=6)
+
+        # keys: Enter => Yes, Esc => Cancel
+        dlg.bind("<Return>", lambda e: _yes())
+        dlg.bind("<Escape>", lambda e: _cancel())
+        dlg.protocol("WM_DELETE_WINDOW", _cancel)
+
+        # focus default on center "No"
+        for child in btnbar.grid_slaves(row=0, column=1):
+            try:
+                child.focus_set()
+                break
+            except Exception:
+                pass
+
+        dlg.wait_window()
+        return choice["val"]
+
+    def _export_filtered_xlsx(self):
+        """
+        Export exactly what is visible in the sheet to XLSX.
+        """
+        from tkinter import filedialog, messagebox
+
+        # get visible data from tksheet
+        try:
+           # tksheet (your version) → no kwargs
+            visible_rows = self.sheet.get_sheet_data() or []
+
+            # headers: prefer sheet.headers() if it exists, else a stored list, else infer
+            headers = []
+            try:
+                hdrs = getattr(self.sheet, "headers", None)
+                headers = list(hdrs()) if callable(hdrs) else list(hdrs) if hdrs else []
+            except Exception:
+                headers = getattr(self, "_headers", [])
+
+        except Exception as e:
+            messagebox.showerror("Export", f"Cannot read visible rows from table:\n{e}")
+            return
+
+        # pick destination
+        path = filedialog.asksaveasfilename(
+            title="Save filtered logs",
+            defaultextension=".xlsx",
+            filetypes=[("Excel Workbook","*.xlsx"), ("All files","*.*")]
+        )
+        if not path:
+            return
+
+        # write XLSX
+        try:
+            from openpyxl import Workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "logs (filtered)"
+
+            # header
+            if headers:
+                ws.append(headers)
+
+            # rows
+            for r in visible_rows:
+                ws.append(list(r))
+
+            # quick autosize
+            if headers:
+                for c in range(1, len(headers) + 1):
+                    col_letter = ws.cell(row=1, column=c).column_letter
+                    maxlen = max(
+                        [len(str(headers[c-1]))]
+                        + [len(str(row[c-1])) for row in visible_rows if len(row) >= c]
+                    ) if visible_rows else len(str(headers[c-1]))
+                    ws.column_dimensions[col_letter].width = min(80, max(12, maxlen + 2))
+
+            wb.save(path)
+            messagebox.showinfo("Export", f"Filtered logs exported to:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Export", f"Failed to export filtered logs:\n{e}")
 
     def _apply(self):
         st = self.cb_state.get().strip()
@@ -1284,6 +1677,8 @@ class App(tk.Tk):
             show_top_left_corner=False,
         )
         self.sheet.grid(row=0, column=0, sticky="nsew")
+        self.sheet.bind("<Configure>", lambda e: fit_sheet_fullwidth(self.sheet))
+
         self.sheet.readonly = True  # prevent edits
 
         self.sheet.enable_bindings((
@@ -1339,7 +1734,11 @@ class App(tk.Tk):
                 except Exception as e:
                     self._log(f"[RESUME] Could not auto-load last CSV: {e}")
         dlg = Login(self, on_ok)
-        self.wait_window(dlg)
+        dlg.wait_visibility()
+        dlg.focus_force()
+        dlg.lift()
+        # ensure caret ends up in the field even on Windows
+        dlg.after(0, lambda: (dlg.ent_u.focus_set(), dlg.ent_u.icursor("end")))
 
     def _logout(self):
         if self.running:
@@ -1498,13 +1897,16 @@ class App(tk.Tk):
         self.sheet.set_sheet_data(self.data or [])
         try:
             # auto size, then clamp super-wide columns
-            self.sheet.set_all_cell_sizes_to_text(redraw=False)
-            widths = self.sheet.get_column_widths()  # list[int]
-            max_px = 450
-            for c, w in enumerate(widths):
-                if w > max_px:
-                    self.sheet.set_column_width(c, max_px)
-            self.sheet.refresh()
+                    # content-based widths, then fill remaining width
+            try:
+                self.sheet.set_all_cell_sizes_to_text(redraw=False)
+            except Exception:
+                pass
+            fit_sheet_fullwidth(self.sheet)  # uses the helper
+            try:
+                self.sheet.refresh()
+            except Exception:
+                pass
 
             # keep your existing log line; do NOT reference used_delim here
             try:
