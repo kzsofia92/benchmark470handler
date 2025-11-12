@@ -23,7 +23,7 @@ import datetime
 # app.py (add this near the top)
 from pathlib import Path
 import shutil, glob
-from path_helpers import resource_path, user_config_dir, user_log_dir
+from path_helper import resource_path, user_config_dir, user_log_dir
 
 APP = "BMarkTMC"
 _cfg = user_config_dir(APP); _cfg.mkdir(parents=True, exist_ok=True)
@@ -117,21 +117,13 @@ def center_on_parent(win, parent=None):
     win.geometry(f"+{x}+{y}")
 
 def fit_sheet_fullwidth(sheet, min_px=60, max_px=700, pad_px=0):
-    """
-    1) Size columns to content (if not done yet)
-    2) Clamp each column (min/max)
-    3) Distribute the delta so total width == available width
-       (handles both expand and shrink)
-    4) Subtracts visible vertical scrollbar + borders so no H-scrollbar appears
-    """
     try:
-        # 0) let tksheet set content widths if caller hasn't yet
+        # 1) Let tksheet compute content widths
         try:
             sheet.set_all_cell_sizes_to_text(redraw=False)
         except Exception:
             pass
 
-        # 1) current widths
         try:
             widths = list(sheet.get_column_widths())
         except Exception:
@@ -139,59 +131,78 @@ def fit_sheet_fullwidth(sheet, min_px=60, max_px=700, pad_px=0):
         if not widths:
             return
 
-        # 2) clamp
         widths = [max(min_px, min(max_px, w + pad_px)) for w in widths]
 
-        # 3) compute available width in the drawing area
-        #    subtract vertical scrollbar if it's shown + widget borders
-        sbw = 0
-        try:
-            if getattr(sheet, "v_scrollbar", None) and sheet.v_scrollbar.winfo_ismapped():
-                sbw = sheet.v_scrollbar.winfo_width()
-        except Exception:
-            sbw = 0
-        try:
-            border = int(sheet.cget("bd") or 0)
-        except Exception:
-            border = 0
+        # 2) Compute truly usable width = min(MT, CH) - RI - VSB - borders - guard
+       # === compute truly usable width =========================================
+        def _w(w):
+            try: return int(w.winfo_width())
+            except Exception: return 0
 
-        avail = sheet.winfo_width() - sbw - (2 * border) - 2
-        avail = max(0, avail)
+        mt = getattr(sheet, "MT", None)
+        ch = getattr(sheet, "CH", None)
+        ri = getattr(sheet, "RI", None)
 
-        # 4) distribute delta (expand or shrink) so sum(widths) == avail
-        cur = sum(widths)
-        delta = avail - cur
+        mt_w = _w(mt) if mt else _w(sheet)
+        ch_w = _w(ch)            # header width
+        ri_w = _w(ri) if (ri and ri.winfo_ismapped()) else 0
+
+        # vertical scrollbar lives on MT in your tksheet
+        vsb_w = 0
+        try:
+            sb = getattr(mt, "v_scrollbar", None)
+            if sb and sb.winfo_ismapped():
+                vsb_w = int(sb.winfo_width())
+        except Exception:
+            vsb_w = 0
+
+        try:
+            bd = int(sheet.cget("bd") or 0)
+        except Exception:
+            bd = 0
+        try:
+            hl = int(sheet.cget("highlightthickness") or 0)
+        except Exception:
+            hl = 0
+
+        # pick the narrower of header/body to avoid 1–2 px mismatch
+        base_w = mt_w if ch_w == 0 else min(mt_w, ch_w)
+
+        # a slightly larger guard kills theme/rounding quirks
+        GUARD = 22
+        avail = max(0, base_w - ri_w - vsb_w - 2*bd - 2*hl - GUARD)
+        # ========================================================================
+
+
+        # 3) Expand/Shrink to match avail exactly
+        total = sum(widths)
+        delta = avail - total
         n = len(widths)
-        if n == 0:
-            return
 
-        if delta != 0:
-            step = int(delta // n)   # can be negative
+        if n and delta:
+            step = int(delta // n)
             rem  = int(abs(delta) % n)
             sign = 1 if delta > 0 else -1
 
             for i in range(n):
                 widths[i] += step
-            # spread remainder from left
             for i in range(rem):
                 widths[i] += sign
 
-            # if shrinking pushed a col below min_px, pull it back up and
-            # balance from the right to keep total ≤ avail (safety)
-            total = sum(widths)
-            if total > avail:
-                over = total - avail
-                i = n - 1
-                while over > 0 and i >= 0:
-                    take = min(over, max(0, widths[i] - min_px))
-                    widths[i] -= take
-                    over -= take
-                    i -= 1
+        # final safety: trim from right until <= avail
+        over = sum(widths) - avail
+        i = n - 1
+        while over > 0 and i >= 0:
+            take = min(over, max(0, widths[i] - min_px))
+            if take > 0:
+                widths[i] -= take
+                over -= take
+            i -= 1
 
-        # 5) apply
+        # 4) Apply
         for c, w in enumerate(widths):
             try:
-                sheet.column_width(c, max(min_px, w), only_set_if_too_small=False)
+                sheet.column_width(c, w, only_set_if_too_small=False)
             except Exception:
                 pass
 
@@ -767,7 +778,9 @@ class LogViewer(tk.Toplevel):
         self.sheet.extra_bindings([("header_left_click", self._on_header_click)])
 
         self.sheet.grid(row=0, column=0, sticky="nsew")
-        self.sheet.bind("<Configure>", lambda e: fit_sheet_fullwidth(self.sheet))
+        self.sheet.MT.bind("<Configure>", lambda e: fit_sheet_fullwidth(self.sheet))
+        self.sheet.CH.bind("<Configure>", lambda e: fit_sheet_fullwidth(self.sheet))
+
 #                 ^ ‘self’ here is your Tk app (no _fit_sheet_fullwidth attr)
 
 
@@ -776,7 +789,7 @@ class LogViewer(tk.Toplevel):
             "single_select","row_select","column_select","arrowkeys","drag_select","copy",
             "column_width_resize","row_height_resize","sort"
         ))
-        self.sheet.pack(fill="both", expand=True)
+        # self.sheet.pack(fill="both", expand=True)
         # Load, build tag list, init date range, show filtered view
         self._load()                   # should set self._all_rows and call _rebuild_filter_options(...)
         # If your _load() doesn't call these, ensure:
@@ -932,6 +945,7 @@ class LogViewer(tk.Toplevel):
         self.sheet.headers(headers)
         data = [[r.get(h, "") for h in headers] for r in rows]
         self.sheet.set_sheet_data(data or [])
+        self.after_idle(lambda: fit_sheet_fullwidth(self.sheet))
         # 1) let tksheet compute content-based widths
         try:
             self.sheet.set_all_cell_sizes_to_text(redraw=False)
@@ -1677,7 +1691,10 @@ class App(tk.Tk):
             show_top_left_corner=False,
         )
         self.sheet.grid(row=0, column=0, sticky="nsew")
-        self.sheet.bind("<Configure>", lambda e: fit_sheet_fullwidth(self.sheet))
+        # self.sheet.bind("<Configure>", lambda e: fit_sheet_fullwidth(self.sheet))
+        self.sheet.MT.bind("<Configure>", lambda e: fit_sheet_fullwidth(self.sheet))
+        self.sheet.CH.bind("<Configure>", lambda e: fit_sheet_fullwidth(self.sheet))
+
 
         self.sheet.readonly = True  # prevent edits
 
