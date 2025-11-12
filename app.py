@@ -577,7 +577,7 @@ class LogViewer(tk.Toplevel):
         self._date_start = None
         self._date_end = None
 
-        ttk.Label(bar2, text="Interval:").pack(side="left", padx=(0, 4))
+        ttk.Label(bar2, text="Filter date:").pack(side="left", padx=(4, 4))
         self.cb_date_mode = ttk.Combobox(
             bar2, state="readonly", width=10,
             values=["(all)", "Day", "Week", "Custom"],
@@ -746,8 +746,8 @@ class LogViewer(tk.Toplevel):
             return None
         ts = ts.strip()
         # try common formats you use in logs.csv (extend if needed)
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
-                    "%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y.%m.%d"):
+        for fmt in ("%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d",
+                    "%Y-%m-%d %H:%M:%S", "%Y.%m.%d"):
             try:
                 return datetime.datetime.strptime(ts, fmt).date()
             except Exception:
@@ -773,7 +773,7 @@ class LogViewer(tk.Toplevel):
             d0 = self._anchor
             d1 = self._anchor
             self._date_start, self._date_end = d0, d1
-            self._date_label.set(d0.strftime("%Y-%m-%d"))
+            self._date_label.set(d0.strftime("%Y.%m.%d"))
             self.ent_from.configure(state="disabled")
             self.ent_to.configure(state="disabled")
             return
@@ -783,7 +783,7 @@ class LogViewer(tk.Toplevel):
             monday = self._anchor - datetime.timedelta(days=self._anchor.weekday())
             sunday = monday + datetime.timedelta(days=6)
             self._date_start, self._date_end = monday, sunday
-            self._date_label.set(f"{monday:%Y-%m-%d} .. {sunday:%Y-%m-%d}")
+            self._date_label.set(f"{monday:%Y.%m.%d} - {sunday:%Y.%m.%d}")
             self.ent_from.configure(state="disabled")
             self.ent_to.configure(state="disabled")
             return
@@ -811,7 +811,7 @@ class LogViewer(tk.Toplevel):
         if d0 > d1:
             d0, d1 = d1, d0
         self._date_start, self._date_end = d0, d1
-        self._date_label.set(f"{d0:%Y-%m-%d} .. {d1:%Y-%m-%d}")
+        self._date_label.set(f"{d0:%Y.%m.%d} - {d1:%Y.%m.%d}")
 
     def _on_date_mode(self):
         """Mode changed: compute range and auto-apply (state+tag+date)."""
@@ -835,7 +835,7 @@ class LogViewer(tk.Toplevel):
                     d = datetime.date.fromisoformat(txt)
                     d2 = d + datetime.timedelta(days=delta_days)
                     e.delete(0, "end")
-                    e.insert(0, d2.strftime("%Y-%m-%d"))
+                    e.insert(0, d2.strftime("%Y.%m.%d"))
                 except Exception:
                     pass
             _shift_box(self.ent_from)
@@ -926,8 +926,8 @@ class LogViewer(tk.Toplevel):
         if len(digits) <= 4:
             return y
         if len(digits) <= 6:
-            return f"{y}-{m}"
-        return f"{y}-{m}-{d}"
+            return f"{y}.{m}"
+        return f"{y}.{m}.{d}"
 
     def _digits_only(self, s: str) -> str:
         return "".join(ch for ch in (s or "") if ch.isdigit())
@@ -936,8 +936,8 @@ class LogViewer(tk.Toplevel):
         d = digits[:8]
         y, m, d2 = d[0:4], d[4:6], d[6:8]
         if len(d) <= 4:  return y
-        if len(d) <= 6:  return f"{y}-{m}"
-        return f"{y}-{m}-{d2}"
+        if len(d) <= 6:  return f"{y}.{m}"
+        return f"{y}.{m}.{d2}"
 
     def _normalize_date_field(self, entry: ttk.Entry):
         # On focus out: coerce to canonical YYYY-MM-DD if possible; leave partials as-is
@@ -969,14 +969,14 @@ class LogViewer(tk.Toplevel):
             idx = entry.index("insert")
             if idx > 0:
                 # if cursor is just after a '-', erase the '-' first
-                if entry.get()[idx-1:idx] == "-":
+                if entry.get()[idx-1:idx] == ".":
                     entry.delete(idx-1)
                     return "break"
             return  # default backspace after our dash handling
         if ks == "Delete":
             idx = entry.index("insert")
             text = entry.get()
-            if idx < len(text) and text[idx:idx+1] == "-":
+            if idx < len(text) and text[idx:idx+1] == ".":
                 entry.delete(idx)
                 return "break"
             return  # default delete
@@ -989,7 +989,7 @@ class LogViewer(tk.Toplevel):
             idx = entry.index("insert")
             # insert dash at 4 or 7 before digit if cursor is at those positions
             if idx in (4, 7):
-                entry.insert(idx, "-")
+                entry.insert(idx, ".")
                 idx += 1
                 entry.icursor(idx)
             entry.insert(idx, ch)
@@ -1001,8 +1001,8 @@ class LogViewer(tk.Toplevel):
             idx = entry.index("insert")
             if idx in (4, 7):
                 text = entry.get()
-                if not (idx < len(text) and text[idx] == "-"):
-                    entry.insert(idx, "-")
+                if not (idx < len(text) and text[idx] == "."):
+                    entry.insert(idx, ".")
                     entry.icursor(idx + 1)
                 # if a dash is already there, just move past it
                 else:
@@ -1013,21 +1013,9 @@ class LogViewer(tk.Toplevel):
         # block everything else
         return "break"
     
-    def _digits_only(self, s: str) -> str:
-        return "".join(ch for ch in (s or "") if ch.isdigit())
-
-    def _format_digits_ymd(self, digits: str) -> str:
-        d = (digits or "")[:8]
-        y, m, d2 = d[0:4], d[4:6], d[6:8]
-        if len(d) <= 4:
-            return y
-        if len(d) <= 6:
-            return f"{y}-{m}"
-        return f"{y}-{m}-{d2}"
-
     def _is_real_date(self, s: str) -> bool:
         # Accept only full YYYY-MM-DD here
-        if len(s) != 10 or s[4] != "-" or s[7] != "-":
+        if len(s) != 10 or s[4] != "." or s[7] != ".":
             return False
         y, m, d = s[0:4], s[5:7], s[8:10]
         if not (y.isdigit() and m.isdigit() and d.isdigit()):
@@ -1059,12 +1047,12 @@ class LogViewer(tk.Toplevel):
             elif not ch.isdigit():
                 return False
         # don't allow too-short segments like 'YYYY-' (OK) but block 'YYYY-M-'
-        if len(proposed) >= 5 and proposed[4] != "-":
+        if len(proposed) >= 5 and proposed[4] != ".":
             return False
-        if len(proposed) >= 8 and proposed[7] != "-":
+        if len(proposed) >= 8 and proposed[7] != ".":
             return False
         # basic month/day bounds on partials (so '2025-19' is rejected)
-        parts = proposed.split("-")
+        parts = proposed.split(".")
         if len(parts) >= 2 and parts[1]:
             mm = parts[1]
             if not mm.isdigit() or not (1 <= int(mm) <= 12):
@@ -1102,7 +1090,7 @@ class LogViewer(tk.Toplevel):
         if len(formatted) == 10 and not self._is_real_date(formatted):
             # try trimming to a valid partial (YYYY-MM or YYYY)
             if len(digits) >= 6:
-                formatted = f"{digits[:4]}-{digits[4:6]}"
+                formatted = f"{digits[:4]}.{digits[4:6]}"
             else:
                 formatted = digits[:4]
         entry.delete(0, "end")
@@ -1147,6 +1135,9 @@ class App(tk.Tk):
 
     def _build_ui(self):
         # Menubar
+        base = self.cget("background")
+        ttk.Style(self).configure("FlatBar.TFrame", background=base)
+
         self.mbar = tk.Menu(self)
 
         # App menu
@@ -1162,9 +1153,64 @@ class App(tk.Tk):
         self.menu_settings.add_command(label="Logs…", command=self._open_logs)
         self.mbar.add_cascade(label="Settings", menu=self.menu_settings)
 
-        self.config(menu=self.mbar)
+        # self.config(menu=self.mbar)
+        
+        # ---- Faux menubar strip (colorable) ----
+        _bar_bg = self.cget("bg")  # exactly the same as the main window background
+        bar = tk.Frame(self, bg=_bar_bg, bd=0, highlightthickness=0)
+        bar.pack(fill="x", side="top")
 
-        top = ttk.Frame(self, padding=8); top.pack(fill="x")
+        # Two menubuttons that reuse the SAME dropdown menus
+        mb_app = tk.Label(bar, text="App", bg=_bar_bg, padx=10, pady=4, cursor="hand2")
+        mb_app.pack(side="left")
+
+        mb_settings = tk.Label(bar, text="Settings", bg=_bar_bg, padx=10, pady=4, cursor="hand2")
+        mb_settings.pack(side="left")
+
+
+        # # Hook the real menus to the menubuttons
+        # mb_app["menu"] = self.menu_app
+        # mb_settings["menu"] = self.menu_settings
+
+        # --- hover highlight only (no other behavior) ---
+        _bar_bg   = str(bar["bg"])      # match the strip
+        _hover_bg = "#e6e6e6"           # light gray like native hot-track
+
+        def _hover_on(e):  e.widget.configure(bg=_hover_bg)
+        def _hover_off(e): e.widget.configure(bg=_bar_bg)
+
+        for _mb in (mb_app, mb_settings):
+            # keep visuals flat and ensure base bg matches the strip
+            _mb.configure(bg=_bar_bg, activebackground=_bar_bg, relief="flat", bd=0, highlightthickness=0)
+            _mb.bind("<Enter>", _hover_on)
+            _mb.bind("<Leave>", _hover_off)
+
+
+        # ---- Open dropdowns on click (and with ↓ key) ----
+        def _popup_under(widget, menu):
+            # position the menu right under the menubutton, not at the mouse
+            x = widget.winfo_rootx()
+            y = widget.winfo_rooty() + widget.winfo_height()
+            menu.tk_popup(x, y)    # show
+            menu.grab_release()    # let clicks pass after popup
+
+        mb_app.bind("<Button-1>",      lambda e: _popup_under(mb_app, self.menu_app))
+        mb_settings.bind("<Button-1>", lambda e: _popup_under(mb_settings, self.menu_settings))
+        mb_app.bind("<Key-Down>",      lambda e: _popup_under(mb_app, self.menu_app))
+        mb_settings.bind("<Key-Down>", lambda e: _popup_under(mb_settings, self.menu_settings))
+
+
+        # # Faux menubar with same bg as window
+        # bar = tk.Frame(self, bg=self.cget("bg"), bd=0, highlightthickness=0); bar.pack(fill="x", side="top")
+        # mb_app = tk.Menubutton(bar, text="App", bg=self.cget("bg"), activebackground=self.cget("bg"), relief="flat"); mb_app["menu"] = self.menu_app; mb_app.pack(side="left", padx=6, pady=3)
+        # mb_settings = tk.Menubutton(bar, text="Settings", bg=self.cget("bg"), activebackground=self.cget("bg"), relief="flat"); mb_settings["menu"] = self.menu_settings; mb_settings.pack(side="left", padx=6, pady=3)
+
+
+        base = self.cget("background")
+        ttk.Style(self).configure("FlatBar.TFrame", background=base)
+
+        top = ttk.Frame(self, padding=8, style="FlatBar.TFrame"); top.pack(fill="x")
+
 
         self.lbl_role = ttk.Label(top, text="Role: -")
         self.lbl_role.pack(side="left", padx=(0, 8))
@@ -1176,6 +1222,24 @@ class App(tk.Tk):
         self.ent_pattern.insert(0, self.cfg.get("pattern", ""))
         self.ent_pattern.pack(side="left")
         self._pattern_last = self.ent_pattern.get().strip()
+
+        # click opens the same dropdown menus under each label
+        def _popup_under(widget, menu):
+            x = widget.winfo_rootx()
+            y = widget.winfo_rooty() + widget.winfo_height()
+            menu.tk_popup(x, y); menu.grab_release()
+
+        mb_app.bind("<Button-1>",      lambda e: _popup_under(mb_app, self.menu_app))
+        mb_settings.bind("<Button-1>", lambda e: _popup_under(mb_settings, self.menu_settings))
+
+        # hover highlight only
+        _hover_bg = "#e6e6e6"
+        def _hover_on(e):  e.widget.configure(bg=_hover_bg)
+        def _hover_off(e): e.widget.configure(bg=_bar_bg)
+
+        mb_app.bind("<Enter>", _hover_on);     mb_app.bind("<Leave>", _hover_off)
+        mb_settings.bind("<Enter>", _hover_on);mb_settings.bind("<Leave>", _hover_off)
+
 
         def _pattern_changed(_evt=None):
             new = self.ent_pattern.get().strip()

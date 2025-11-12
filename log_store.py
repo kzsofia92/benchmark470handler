@@ -21,7 +21,7 @@ def append_event(user: str, state: str, row_index: int, line_content: str, error
     row_index: 0-based in code; we store 1-based in the log.
     """
     _ensure_file()
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.datetime.now().strftime("%Y.%m.%d %H:%M:%S")
     with open(_LOG_PATH, "a", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=";")
         w.writerow([ts, user or "", state, str(row_index + 1), line_content, (error or "")])
