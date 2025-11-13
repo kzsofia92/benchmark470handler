@@ -568,3 +568,18 @@ timestamp;user;state;row;line_content;error
 2025.11.12 16:24:37;admin;screen;0;"[CSV] Loaded 111 rows (delimiter=';')";
 2025.11.12 16:24:37;admin;data stream loaded;0;CSV loaded: C:/Users/Logisztika/Documents/bigtest.log.csv;
 2025.11.12 16:24:37;admin;screen;0;[RESUME] Highlight row 15, next to send: row 15;
+2025.11.12 16:30:05;admin;login;0;user logged in;
+2025.11.12 16:30:05;admin;data stream loaded;0;CSV loaded: C:/Users/Logisztika/Documents/bigtest.log.csv;
+2025.11.12 16:30:05;admin;screen;0;"[CSV] Loaded 111 rows (delimiter=';')";
+2025.11.12 16:30:05;admin;data stream loaded;0;CSV loaded: C:/Users/Logisztika/Documents/bigtest.log.csv;
+2025.11.12 16:30:05;admin;screen;0;[RESUME] Highlight row 15, next to send: row 15;
+2025.11.13 08:23:56;admin;login;0;user logged in;
+2025.11.13 08:23:56;admin;data stream loaded;0;CSV loaded: C:/Users/Logisztika/Documents/bigtest.log.csv;
+2025.11.13 08:23:56;admin;screen;0;"[CSV] Loaded 111 rows (delimiter=';')";
+2025.11.13 08:23:56;admin;data stream loaded;0;CSV loaded: C:/Users/Logisztika/Documents/bigtest.log.csv;
+2025.11.13 08:23:56;admin;screen;0;[RESUME] Highlight row 15, next to send: row 15;
+2025.11.13 08:29:37;admin;login;0;user logged in;
+2025.11.13 08:29:37;admin;data stream loaded;0;CSV loaded: C:/Users/Logisztika/Documents/bigtest.log.csv;
+2025.11.13 08:29:37;admin;screen;0;"[CSV] Loaded 111 rows (delimiter=';')";
+2025.11.13 08:29:37;admin;data stream loaded;0;CSV loaded: C:/Users/Logisztika/Documents/bigtest.log.csv;
+2025.11.13 08:29:37;admin;screen;0;[RESUME] Highlight row 15, next to send: row 15;

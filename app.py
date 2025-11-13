@@ -118,7 +118,6 @@ def center_on_parent(win, parent=None):
 
 def fit_sheet_fullwidth(sheet, min_px=60, max_px=700, pad_px=0):
     try:
-        # 1) Let tksheet compute content widths
         try:
             sheet.set_all_cell_sizes_to_text(redraw=False)
         except Exception:
@@ -127,34 +126,35 @@ def fit_sheet_fullwidth(sheet, min_px=60, max_px=700, pad_px=0):
         try:
             widths = list(sheet.get_column_widths())
         except Exception:
-            widths = []
+            return
         if not widths:
             return
 
+        n = len(widths)
         widths = [max(min_px, min(max_px, w + pad_px)) for w in widths]
 
-        # 2) Compute truly usable width = min(MT, CH) - RI - VSB - borders - guard
-       # === compute truly usable width =========================================
-        def _w(w):
+        # --- visible width = min(MT, CH) - RI - MT's vertical scrollbar - borders/highlight - guard
+        def _w(w): 
             try: return int(w.winfo_width())
             except Exception: return 0
 
-        mt = getattr(sheet, "MT", None)
-        ch = getattr(sheet, "CH", None)
-        ri = getattr(sheet, "RI", None)
+        MT = getattr(sheet, "MT", None)
+        CH = getattr(sheet, "CH", None)
+        RI = getattr(sheet, "RI", None)
 
-        mt_w = _w(mt) if mt else _w(sheet)
-        ch_w = _w(ch)            # header width
-        ri_w = _w(ri) if (ri and ri.winfo_ismapped()) else 0
+        mt_w = _w(MT) if MT else _w(sheet)
+        ch_w = _w(CH)
+        base_w = mt_w if ch_w == 0 else min(mt_w, ch_w)
 
-        # vertical scrollbar lives on MT in your tksheet
+        ri_w = _w(RI) if (RI and RI.winfo_ismapped()) else 0
+
         vsb_w = 0
         try:
-            sb = getattr(mt, "v_scrollbar", None)
+            sb = getattr(MT, "v_scrollbar", None)
             if sb and sb.winfo_ismapped():
                 vsb_w = int(sb.winfo_width())
         except Exception:
-            vsb_w = 0
+            pass
 
         try:
             bd = int(sheet.cget("bd") or 0)
@@ -165,46 +165,38 @@ def fit_sheet_fullwidth(sheet, min_px=60, max_px=700, pad_px=0):
         except Exception:
             hl = 0
 
-        # pick the narrower of header/body to avoid 1–2 px mismatch
-        base_w = mt_w if ch_w == 0 else min(mt_w, ch_w)
-
-        # a slightly larger guard kills theme/rounding quirks
-        GUARD = 22
+        GUARD = 18
         avail = max(0, base_w - ri_w - vsb_w - 2*bd - 2*hl - GUARD)
-        # ========================================================================
+        if avail <= 0: 
+            return
 
-
-        # 3) Expand/Shrink to match avail exactly
+        # --- scale to avail, then FORCE last column to take remaining space
         total = sum(widths)
-        delta = avail - total
-        n = len(widths)
+        if total == 0:
+            return
 
-        if n and delta:
-            step = int(delta // n)
-            rem  = int(abs(delta) % n)
-            sign = 1 if delta > 0 else -1
+        scale = avail / total
+        scaled = [max(min_px, min(max_px, int(w * scale))) for w in widths]
 
-            for i in range(n):
-                widths[i] += step
-            for i in range(rem):
-                widths[i] += sign
+        if n == 1:
+            scaled[0] = min(max_px, max(min_px, avail))
+        else:
+            rem = avail - sum(scaled[:-1])
+            scaled[-1] = max(min_px, min(max_px, rem))
 
-        # final safety: trim from right until <= avail
-        over = sum(widths) - avail
+        # final safety: if still a hair over, trim from right
+        over = sum(scaled) - avail
         i = n - 1
         while over > 0 and i >= 0:
-            take = min(over, max(0, widths[i] - min_px))
-            if take > 0:
-                widths[i] -= take
+            can = max(0, scaled[i] - min_px)
+            if can:
+                take = min(can, over)
+                scaled[i] -= take
                 over -= take
             i -= 1
 
-        # 4) Apply
-        for c, w in enumerate(widths):
-            try:
-                sheet.column_width(c, w, only_set_if_too_small=False)
-            except Exception:
-                pass
+        for c, w in enumerate(scaled):
+            sheet.column_width(c, w, only_set_if_too_small=False)
 
         try:
             sheet.redraw()
@@ -330,9 +322,15 @@ class SettingsDialog(tk.Toplevel):
         self.cb_mode.set(cfg.get("connection_mode", "test"))
         self.cb_mode.grid(row=6, column=1, sticky="we")
 
-        # Row 7 — Buttons
+        # Row 6 — Connection mode (moved to its own row; comment typo fixed)
+        ttk.Label(frm, text="Data mode (V = Variable text, Q = Query text) ").grid(row=7, column=0, sticky="e", pady=4, padx=4)
+        self.cb_data_mode = ttk.Combobox(frm, width=22, state="readonly", values=["V", "Q"])
+        self.cb_data_mode.set(cfg.get("connection_mode", "test"))
+        self.cb_data_mode.grid(row=6, column=1, sticky="we")
+
+        # Row 8 — Buttons
         btns = ttk.Frame(frm)
-        btns.grid(row=7, column=0, columnspan=2, pady=10)
+        btns.grid(row=8, column=0, columnspan=2, pady=10)
         ttk.Button(btns, text="Save", command=self._save).pack(side="left", padx=6)
         ttk.Button(btns, text="Cancel", command=self._close).pack(side="left", padx=6)
 
@@ -346,6 +344,8 @@ class SettingsDialog(tk.Toplevel):
         s["databits"] = int(self.cb_data.get().strip() or "8")
         self.cfg["pattern"] = self.ent_pattern.get().strip()
         self.cfg["connection_mode"] = self.cb_mode.get().strip()
+        self.cfg["data_send_mode"] = self.cb_data_mode.get().strip()
+
         self.on_save(self.cfg)
         self._close()
 
@@ -2162,7 +2162,7 @@ class App(tk.Tk):
 
                 # Verify pattern: P + '~' as a verify prefix in the field
                 try:
-                    self.q.put(("log", f"[FRAME] {self._preview_extended_frame('P', '~', '')}"))
+                    self.q.put(("log", f"[FRAME] {self._preview_extended_frame('P', '', '')}"))
                 except Exception:
                     pass
                 rv = self.dev.verify_pattern()
@@ -2184,6 +2184,99 @@ class App(tk.Tk):
 
                 # highlight the current row once at the start
                 self.q.put(("hl", idx))
+
+                idx0 = start_index if start_index is not None else 0
+                q_columns = self._get_query_columns()
+
+                for idx in range(idx0, len(self.data)):
+                    # Hard stop requested?
+                    if not self.running:
+                        break
+                    # Pause requested before we begin this row?
+                    if getattr(self, "paused", False):
+                        self._save_resume(idx, idx)  # keep highlight here
+                        break
+
+                    row = self.data[idx]
+                    line_text = ";".join(str(c) for c in row)
+
+                    # highlight the current row once at the start
+                    self.q.put(("hl", idx))
+
+                    # --------- 0) SEND QUERY TEXT BUFFERS (Q nn<text>) ---------
+                    # Columns named Q1, Q01, q2, etc.
+                    if q_columns:
+                        for col_idx, buf_no in sorted(q_columns.items()):
+                            if col_idx >= len(row):
+                                continue
+                            if not self.running or getattr(self, "paused", False):
+                                break
+
+                            value = row[col_idx]
+                            if value is None:
+                                continue
+                            value = str(value)
+                            if value == "":
+                                continue
+
+                            # Preview frame (same style as for V)
+                            try:
+                                self.q.put((
+                                    "log",
+                                    f"[FRAME] {self._preview_extended_frame('Q', f'{buf_no:02d}', value)}"
+                                ))
+                            except Exception:
+                                pass
+
+                            # Provide + verify query text buffer
+                            try:
+                                ok = self.dev.provide_and_verify_query_text(buf_no, value)
+                                status = "OK" if ok else "MISMATCH"
+                                self.q.put((
+                                    "log",
+                                    f"[Q] buf {buf_no:02d} <- {value} | {status}"
+                                ))
+                            except Exception as e:
+                                self.q.put((
+                                    "log",
+                                    f"[ERROR] query buffer {buf_no:02d} <- {value}: {e}"
+                                ))
+
+                        # If pause/stop was requested during Q transfer, stay on this row
+                        if getattr(self, "paused", False) or not self.running:
+                            self._save_resume(idx, idx)
+                            break
+
+                    # --------- 1) SEND VARIABLES (V + 2-digit field + data) ---------
+                    sent = 0
+                    total = len(row)
+                    error_text = None
+
+                    for c, val in enumerate(row, start=1):
+                        if not self.running or getattr(self, "paused", False):
+                            break
+
+                        # preview frame for setting variable c to val
+                        try:
+                            self.q.put((
+                                "log",
+                                f"[FRAME] {self._preview_extended_frame('V', f'{c:02d}', str(val))}"
+                            ))
+                        except Exception:
+                            pass
+
+                        try:
+                            resp = self.dev.set_var(c, val)
+                            self.q.put((
+                                "log",
+                                f"[V] var {c:02d} <- {val} | {self._short(resp)}"
+                            ))
+                            sent += 1
+                        except Exception as e:
+                            error_text = str(e)
+                            self.q.put(("log", f"[ERROR] set_var({c}) -> {e}"))
+                            break
+
 
                 # --------- 1) SEND VARIABLES (V + 2-digit field + data) ---------
                 sent = 0

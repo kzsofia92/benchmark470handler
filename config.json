@@ -14,5 +14,6 @@
     "next": 14,
     "pending": true
   },
-  "connection_mode": "test"
+  "connection_mode": "test",
+  "data_send_mode": "Q"
 }
