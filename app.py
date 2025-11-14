@@ -325,8 +325,8 @@ class SettingsDialog(tk.Toplevel):
         # Row 6 — Connection mode (moved to its own row; comment typo fixed)
         ttk.Label(frm, text="Data mode (V = Variable text, Q = Query text) ").grid(row=7, column=0, sticky="e", pady=4, padx=4)
         self.cb_data_mode = ttk.Combobox(frm, width=22, state="readonly", values=["V", "Q"])
-        self.cb_data_mode.set(cfg.get("connection_mode", "test"))
-        self.cb_data_mode.grid(row=6, column=1, sticky="we")
+        self.cb_data_mode.set(cfg.get("data_send_mode", "Q"))
+        self.cb_data_mode.grid(row=7, column=1, sticky="we")
 
         # Row 8 — Buttons
         btns = ttk.Frame(frm)
@@ -361,44 +361,59 @@ class TimeoutDialog(tk.Toplevel):
         self.title("Timeout")
         self.resizable(False, False)
         self.transient(master)
-        self.protocol("WM_DELETE_WINDOW", lambda: on_choice("exit"))  # closing acts like exit
+        self.protocol("WM_DELETE_WINDOW", lambda: on_choice("exit"))
         self.on_choice = on_choice
 
+        # Decide wording
+        try:
+            cfg = getattr(master, "cfg", {})
+            mode = str(cfg.get("data_send_mode", "V")).strip().upper()
+        except Exception:
+            mode = "V"
+
+        # For V-mode:
+        # - VSET stage => field semantics
+        # - READY / G / DONE/READY => row semantics (we print once per row)
+        if mode == "V" and stage.upper() in ("VSET", "FIELD"):
+            unit = "field"
+            btn_continue = "Continue (next field)"
+            btn_repeat   = "Repeat (same field)"
+            extra = "\n\nVariable (V) mode: this decision applies to one FIELD."
+        else:
+            unit = "row"
+            btn_continue = "Continue (next row)"
+            btn_repeat   = "Repeat (same row)"
+            extra = "\n\nThis decision applies to the whole ROW."
+
         msg = (
-            f"Row {row_idx + 1} timed out at stage: {stage}\n"
-            f"No response within {seconds:.1f} seconds.\n\n"
-            f"What do you want to do?"
+            f"Timeout at stage: {stage}\n"
+            f"No response within {seconds:.1f} seconds."
+            f"{extra}\n\nWhat do you want to do?"
         )
 
         frm = ttk.Frame(self, padding=12); frm.pack(fill="both", expand=True)
         ttk.Label(frm, text=msg, justify="left").pack(anchor="w", pady=(0,8))
 
         btns = ttk.Frame(frm); btns.pack(fill="x")
-        ttk.Button(btns, text="Continue (next row)", command=lambda: self._choose("continue")).pack(side="left", padx=4)
-        ttk.Button(btns, text="Repeat (same row)", command=lambda: self._choose("repeat")).pack(side="left", padx=4)
-        ttk.Button(btns, text="Exit", command=lambda: self._choose("exit")).pack(side="left", padx=4)
+        ttk.Button(btns, text=btn_continue, command=lambda: self._choose("continue")).pack(side="left", padx=4)
+        ttk.Button(btns, text=btn_repeat,   command=lambda: self._choose("repeat")).pack(side="left", padx=4)
+        ttk.Button(btns, text="Exit",       command=lambda: self._choose("exit")).pack(side="left", padx=4)
 
-        # center + modal
         try:
             self.update_idletasks()
             self.tk.call('tk::PlaceWindow', str(self), 'center')
         except Exception:
             pass
-        self.grab_set()
-        self.lift()
+        self.grab_set(); self.lift()
         self.attributes("-topmost", True)
         self.after(0, lambda: self.attributes("-topmost", False))
 
     def _choose(self, what: str):
-        try:
-            self.grab_release()
-        except Exception:
-            pass
+        try: self.grab_release()
+        except Exception: pass
         self.on_choice(what)
         self.destroy()
 
-# -------------------- USER MGMT --------------------
-# -------------------- USER MGMT --------------------
 class UserManagementDialog(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
@@ -1523,6 +1538,7 @@ class App(tk.Tk):
         self.running = False
         self.paused = False
         self.current_index = -1
+        self.current_field = 0     
         self.resume_index = 0  # next index to send if resuming
         self.override_start_index: Optional[int] = None  # operator-chosen start row (session only)
         self.var_start_from = tk.StringVar(value="Start from: auto")  # UI hint
@@ -2063,11 +2079,29 @@ class App(tk.Tk):
                             f"rows={len(self.data)} pattern={pat}", None)
         except Exception:
             pass
+              # operator override beats persisted resume; else compute from resume
         # operator override beats persisted resume; else compute from resume
-        start_idx = self.override_start_index if self.override_start_index is not None else self._compute_start_index()
-        self._log(f"[START] Starting at row {start_idx+1}")
-        self.worker = threading.Thread(target=self._batch_worker, args=(pat, start_idx), daemon=True)
+        if self.override_start_index is not None:
+            start_idx = int(self.override_start_index)
+            start_field = 0
+        else:
+            start_idx, start_field = self._compute_start_index()
+
+        # highlight immediately (turns selected row green right away)
+        try:
+            self._highlight(start_idx)
+        except Exception:
+            pass
+
+        self._log(f"[START] Starting at row {start_idx+1}, field {start_field+1}")
+        self.worker = threading.Thread(
+            target=self._batch_worker,
+            args=(pat, start_idx, start_field),
+            daemon=True,
+        )
         self.worker.start()
+
+
 
         # reset override label to auto once we actually start
         self.override_start_index = None
@@ -2134,15 +2168,25 @@ class App(tk.Tk):
             messagebox.showinfo("Start from row", "Please select a row first.")
             return
         self._set_start_from(idx)
-    def _batch_worker(self, pattern: Optional[str], start_index: Optional[int] = None):
+
+
+    def _batch_worker(self, pattern: Optional[str], start_index: Optional[int] = None, start_field: Optional[int] = None):
         """
         Batch sender with:
-        - proper extended-frame logging (human-readable preview including BCC)
-        - correct pause behavior (keeps highlight on current row when paused/stopped)
+        - Correct highlight timing (immediate)
+        - Resume by (row, field)
+        - Q mode (row-based): 1 print per row, REPEAT = same row, CONTINUE = next row
+        - V mode (field-based): 1 print per cell, REPEAT = same field, CONTINUE = next field
         """
         user_name = getattr(self.user, "username", "") if self.user else ""
         try:
-            # --- PUT MARKER ONLINE (O) ---
+            mode = str(self.cfg.get("data_send_mode", "V")).strip().upper()
+        except Exception:
+            mode = "V"
+        use_query_mode = (mode == "Q")
+
+        try:
+            # --- PUT ONLINE ---
             try:
                 self.q.put(("log", f"[FRAME] {self._preview_extended_frame('O', '', '')}"))
             except Exception:
@@ -2150,9 +2194,8 @@ class App(tk.Tk):
             r = self.dev.put_online()
             self.q.put(("log", f"[PUT ONLINE] {repr(r)}"))
 
-            # --- PATTERN LOAD / VERIFY (if any) ---
+            # --- PATTERN LOAD/VERIFY (if any) ---
             if pattern:
-                # Load pattern: P + data
                 try:
                     self.q.put(("log", f"[FRAME] {self._preview_extended_frame('P', '', pattern)}"))
                 except Exception:
@@ -2160,7 +2203,6 @@ class App(tk.Tk):
                 r1 = self.dev.load_pattern(pattern)
                 self.q.put(("log", f"[LOAD] {repr(r1)}"))
 
-                # Verify pattern: P + '~' as a verify prefix in the field
                 try:
                     self.q.put(("log", f"[FRAME] {self._preview_extended_frame('P', '', '')}"))
                 except Exception:
@@ -2168,220 +2210,301 @@ class App(tk.Tk):
                 rv = self.dev.verify_pattern()
                 self.q.put(("log", f"[VERIFY] {repr(rv)}"))
 
-            idx0 = start_index if start_index is not None else 0
+            row0   = start_index if start_index is not None else 0
+            field0 = start_field if start_field is not None else 0
 
-            for idx in range(idx0, len(self.data)):
-                # Hard stop requested?
-                if not self.running:
-                    break
-                # Pause requested before we begin this row?
-                if getattr(self, "paused", False):
-                    self._save_resume(idx, idx)  # keep highlight here
-                    break
-
-                row = self.data[idx]
-                line_text = ";".join(str(c) for c in row)
-
-                # highlight the current row once at the start
-                self.q.put(("hl", idx))
-
-                idx0 = start_index if start_index is not None else 0
-                q_columns = self._get_query_columns()
-
-                for idx in range(idx0, len(self.data)):
-                    # Hard stop requested?
+            # ---------------- Q MODE: row-based ----------------
+            if use_query_mode:
+                idx = row0
+                while idx < len(self.data):
                     if not self.running:
                         break
-                    # Pause requested before we begin this row?
                     if getattr(self, "paused", False):
-                        self._save_resume(idx, idx)  # keep highlight here
+                        self._save_resume(idx, idx, 0)
                         break
 
                     row = self.data[idx]
-                    line_text = ";".join(str(c) for c in row)
+                    line_text = ";".join("" if c is None else str(c) for c in row)
 
-                    # highlight the current row once at the start
+                    # highlight immediately
                     self.q.put(("hl", idx))
 
-                    # --------- 0) SEND QUERY TEXT BUFFERS (Q nn<text>) ---------
-                    # Columns named Q1, Q01, q2, etc.
-                    if q_columns:
-                        for col_idx, buf_no in sorted(q_columns.items()):
-                            if col_idx >= len(row):
-                                continue
-                            if not self.running or getattr(self, "paused", False):
-                                break
-
-                            value = row[col_idx]
-                            if value is None:
-                                continue
-                            value = str(value)
-                            if value == "":
-                                continue
-
-                            # Preview frame (same style as for V)
-                            try:
-                                self.q.put((
-                                    "log",
-                                    f"[FRAME] {self._preview_extended_frame('Q', f'{buf_no:02d}', value)}"
-                                ))
-                            except Exception:
-                                pass
-
-                            # Provide + verify query text buffer
-                            try:
-                                ok = self.dev.provide_and_verify_query_text(buf_no, value)
-                                status = "OK" if ok else "MISMATCH"
-                                self.q.put((
-                                    "log",
-                                    f"[Q] buf {buf_no:02d} <- {value} | {status}"
-                                ))
-                            except Exception as e:
-                                self.q.put((
-                                    "log",
-                                    f"[ERROR] query buffer {buf_no:02d} <- {value}: {e}"
-                                ))
-
-                        # If pause/stop was requested during Q transfer, stay on this row
-                        if getattr(self, "paused", False) or not self.running:
-                            self._save_resume(idx, idx)
-                            break
-
-                    # --------- 1) SEND VARIABLES (V + 2-digit field + data) ---------
                     sent = 0
-                    total = len(row)
                     error_text = None
+                    total = min(len(row), 100)
 
-                    for c, val in enumerate(row, start=1):
+                    # send Q01..QNN
+                    for col_idx in range(total):
                         if not self.running or getattr(self, "paused", False):
                             break
+                        buf_no = col_idx + 1
+                        value = "" if row[col_idx] is None else str(row[col_idx])
 
-                        # preview frame for setting variable c to val
                         try:
-                            self.q.put((
-                                "log",
-                                f"[FRAME] {self._preview_extended_frame('V', f'{c:02d}', str(val))}"
-                            ))
+                            self.q.put(("log", f"[FRAME] {self._preview_extended_frame('Q', f'{buf_no:02d}', value)}"))
                         except Exception:
                             pass
-
                         try:
-                            resp = self.dev.set_var(c, val)
-                            self.q.put((
-                                "log",
-                                f"[V] var {c:02d} <- {val} | {self._short(resp)}"
-                            ))
+                            ok = self.dev.provide_and_verify_query_text(buf_no, value)
+                            status = "OK" if ok else "MISMATCH"
+                            self.q.put(("log", f"[Q] buf {buf_no:02d} <- {value} | {status}"))
                             sent += 1
                         except Exception as e:
                             error_text = str(e)
-                            self.q.put(("log", f"[ERROR] set_var({c}) -> {e}"))
+                            self.q.put(("log", f"[ERROR] provide_query_text({buf_no}) -> {e}"))
                             break
 
-
-                # --------- 1) SEND VARIABLES (V + 2-digit field + data) ---------
-                sent = 0
-                total = len(row)
-                error_text = None
-
-                for c, val in enumerate(row, start=1):
-                    if not self.running or getattr(self, "paused", False):
+                    # paused while sending: stay on this row
+                    if getattr(self, "paused", False) or not self.running:
+                        if sent < total and error_text is None:
+                            logs.append_event(user_name, "data partially transferred", idx, line_text, f"sent {sent}/{total}; paused")
+                        self._save_resume(idx, idx, 0)
                         break
 
-                    # preview frame for setting variable c to val
-                    try:
-                        self.q.put(("log", f"[FRAME] {self._preview_extended_frame('V', f'{c:02d}', str(val))}"))
-                    except Exception:
-                        pass
+                    # partial/error: ask how to proceed (treat like READY stage)
+                    if sent < total or error_text is not None:
+                        logs.append_event(user_name, "data partially transferred", idx, line_text, f"sent {sent}/{total}" + (f"; {error_text}" if error_text else ""))
+                        self._save_resume(idx, idx, 0)
+                        decision = self._timeout_decision(idx, "VSET", 0.0)
+                        if decision == "repeat":
+                            continue                # SAME ROW again
+                        elif decision == "continue":
+                            self._save_resume(idx, idx + 1, 0)
+                            idx += 1
+                            continue
+                        elif decision == "exit":
+                            self._save_resume(idx, idx, 0)
+                            self.paused = True
+                            break
 
+                    logs.append_event(user_name, "data transferred", idx, line_text, None)
+
+                    # WAIT READY
+                    if not self.dev.wait_ready(READY_TIMEOUT_S):
+                        self.q.put(("log", "[TIMEOUT] READY timeout"))
+                        logs.append_event(user_name, "print started", idx, line_text, "READY timeout")
+                        decision = self._timeout_decision(idx, "READY", READY_TIMEOUT_S)
+                        if decision == "repeat":
+                            self._save_resume(idx, idx, 0)
+                            continue            # SAME ROW again
+                        elif decision == "continue":
+                            self._save_resume(idx, idx + 1, 0)
+                            idx += 1
+                            continue
+                        elif decision == "exit":
+                            self._save_resume(idx, idx, 0)
+                            self.paused = True
+                            break
+
+                    # START PRINT (G)
                     try:
-                        resp = self.dev.set_var(c, val)
-                        self.q.put(("log", f"[V] var {c:02d} <- {val} | {self._short(resp)}"))
-                        sent += 1
+                        try:
+                            self.q.put(("log", f"[FRAME] {self._preview_extended_frame('G', '', '')}"))
+                        except Exception:
+                            pass
+                        rs = self.dev.start_print()
+                        self.q.put(("log", f"[START] {self._short(rs)}"))
+                        logs.append_event(user_name, "print started", idx, line_text, None)
                     except Exception as e:
-                        error_text = str(e)
-                        self.q.put(("log", f"[ERROR] set_var({c}) -> {e}"))
+                        msg = f"start_print error: {e}"
+                        self.q.put(("log", f"[ERROR] {msg}"))
+                        logs.append_event(user_name, "print started", idx, line_text, msg)
+                        decision = self._timeout_decision(idx, "G", 0.0)
+                        if decision == "repeat":
+                            self._save_resume(idx, idx, 0)
+                            continue
+                        elif decision == "continue":
+                            self._save_resume(idx, idx + 1, 0)
+                            idx += 1
+                            continue
+                        elif decision == "exit":
+                            self._save_resume(idx, idx, 0)
+                            self.paused = True
+                            break
+
+                    if getattr(self, "paused", False) or not self.running:
+                        self._save_resume(idx, idx, 0)
                         break
 
-                # If paused at any time during variable transfer, keep cursor on THIS row and stop
-                if getattr(self, "paused", False) or not self.running:
-                    if sent < total and error_text is None:
-                        logs.append_event(user_name, "data partially transferred", idx, line_text, f"sent {sent}/{total}; paused")
-                    self._save_resume(idx, idx)
-                    break
-
-                # If not fully sent or error: log partial, keep resume here, move on
-                if sent < total or error_text is not None:
-                    logs.append_event(
-                        user_name,
-                        "data partially transferred",
-                        idx,
-                        line_text,
-                        (f"sent {sent}/{total}" + (f"; {error_text}" if error_text else "")),
-                    )
-                    self._save_resume(idx, idx)
-                    continue
-
-                # Row variables fully transferred
-                logs.append_event(user_name, "data transferred", idx, line_text, None)
-
-                # --------- 2) WAIT READY ---------
-                if not self.dev.wait_ready(READY_TIMEOUT_S):
-                    msg = "READY timeout"
-                    self.q.put(("log", f"[TIMEOUT] {msg}"))
-                    logs.append_event(user_name, "print started", idx, line_text, msg)
-
-                    decision = self._timeout_decision(idx, "READY", READY_TIMEOUT_S)
-                    if decision in ("repeat", "exit"):
-                        self._save_resume(idx, idx)
-                        self.paused = True
-                        break
-                    else:  # continue
-                        self._save_resume(idx, idx + 1)
-                        continue
-
-                # --------- 3) START PRINT (G) ---------
-                try:
-                    try:
-                        self.q.put(("log", f"[FRAME] {self._preview_extended_frame('G', '', '')}"))
-                    except Exception:
-                        pass
-                    rs = self.dev.start_print()
-                    self.q.put(("log", f"[START] {self._short(rs)}"))
-                    logs.append_event(user_name, "print started", idx, line_text, None)
-                except Exception as e:
-                    msg = f"start_print error: {e}"
-                    self.q.put(("log", f"[ERROR] {msg}"))
-                    logs.append_event(user_name, "print started", idx, line_text, msg)
-                    self._save_resume(idx, idx)
-                    continue
-
-                # If pause requested immediately after start, keep on this row
-                if getattr(self, "paused", False) or not self.running:
-                    self._save_resume(idx, idx)
-                    break
-
-                # --------- 4) WAIT DONE / READY ---------
-                if not self.dev.wait_done_or_ready(DONE_TIMEOUT_S):
-                    msg = "DONE/READY timeout"
-                    self.q.put(("log", f"[TIMEOUT] {msg}"))
-                    logs.append_event(user_name, "print finished", idx, line_text, msg)
-
-                    decision = self._timeout_decision(idx, "DONE/READY", DONE_TIMEOUT_S)
-                    if decision in ("repeat", "exit"):
-                        self._save_resume(idx, idx)
-                        self.paused = True
-                        break
+                    # WAIT DONE / READY
+                    if not self.dev.wait_done_or_ready(DONE_TIMEOUT_S):
+                        self.q.put(("log", "[TIMEOUT] DONE/READY timeout"))
+                        logs.append_event(user_name, "print finished", idx, line_text, "DONE/READY timeout")
+                        decision = self._timeout_decision(idx, "DONE/READY", DONE_TIMEOUT_S)
+                        if decision == "repeat":
+                            self._save_resume(idx, idx, 0)
+                            continue
+                        elif decision == "continue":
+                            self._save_resume(idx, idx + 1, 0)
+                            idx += 1
+                            continue
+                        elif decision == "exit":
+                            self._save_resume(idx, idx, 0)
+                            self.paused = True
+                            break
                     else:
-                        self._save_resume(idx, idx + 1)
-                        continue
-                else:
-                    logs.append_event(user_name, "print finished", idx, line_text, None)
-                    self._save_resume(idx, idx + 1)
+                        logs.append_event(user_name, "print finished", idx, line_text, None)
+                        self._save_resume(idx, idx + 1, 0)
+                        idx += 1
 
-            self.q.put(("log", "[DONE] Batch complete"))
+            # ---------------- V MODE: field-based ----------------
+            # ---------------- V MODE: one print per row; columns map to text fields ----------------
+            else:
+                idx = row0
+                while idx < len(self.data):
+                    if not self.running: break
+
+                    # highlight row immediately
+                    self.q.put(("hl", idx))
+
+                    if getattr(self, "paused", False):
+                        self._save_resume(idx, idx, field0 if idx == row0 else 0)
+                        break
+
+                    row = self.data[idx]
+                    line_text = ";".join("" if c is None else str(c) for c in row)
+
+                    total_fields = len(row)
+                    field_idx    = field0 if idx == row0 else 0
+
+                    # ---------- 1) SEND ALL Vnn for this row (no print here) ----------
+                    while field_idx < total_fields:
+                        if not self.running: break
+                        if getattr(self, "paused", False):
+                            self._save_resume(idx, idx, field_idx)
+                            break
+
+                        value    = "" if row[field_idx] is None else str(row[field_idx])
+                        field_no = field_idx + 1  # column → text field index (01..)
+
+                        # send Vnn = value
+                        try:
+                            self.q.put(("log", f"[FRAME] {self._preview_extended_frame('V', f'{field_no:02d}', value)}"))
+                        except Exception:
+                            pass
+                        try:
+                            resp = self.dev.set_var(field_no, value)
+                            self.q.put(("log", f"[V] var {field_no:02d} <- {value} | {self._short(resp)}"))
+                        except Exception as e:
+                            msg = f"set_var({field_no}) error: {e}"
+                            self.q.put(("log", f"[ERROR] {msg}"))
+                            logs.append_event(user_name, "data partially transferred", idx, f"{line_text} [field {field_no}]", msg)
+                            self._save_resume(idx, idx, field_idx)
+                            # field-level decision (repeat same field / continue next field / exit)
+                            decision = self._timeout_decision(idx, "VSET", 0.0)
+                            if decision == "repeat":
+                                continue             # SAME FIELD again
+                            elif decision == "continue":
+                                field_idx += 1       # NEXT FIELD
+                                self._save_resume(idx, idx, field_idx if field_idx < total_fields else 0)
+                                continue
+                            elif decision == "exit":
+                                self.paused = True
+                                break
+
+                        # success → next field
+                        field_idx += 1
+                        self._save_resume(idx, idx if field_idx < total_fields else idx, field_idx if field_idx < total_fields else 0)
+
+                    # paused/stopped during V sending
+                    if getattr(self, "paused", False) or not self.running:
+                        break
+
+                    # if we exited early (error/continue may have advanced), check completion
+                    if field_idx < total_fields:
+                        # incomplete row; resume already stored; loop handles next step
+                        continue
+
+                    logs.append_event(user_name, "data transferred", idx, line_text, None)
+
+                    # ---------- 2) PRINT ONCE for the WHOLE ROW ----------
+                    # READY (row-level semantics)
+                    if not self.dev.wait_ready(READY_TIMEOUT_S):
+                        self.q.put(("log", "[TIMEOUT] READY timeout"))
+                        logs.append_event(user_name, "print started", idx, line_text, "READY timeout")
+                        decision = self._timeout_decision(idx, "READY", READY_TIMEOUT_S)
+                        if decision == "repeat":
+                            # repeat SAME ROW print; V variables are already in the device → just retry print
+                            # (do NOT re-send Vs; do NOT advance idx)
+                            continue
+                        elif decision == "continue":
+                            # skip this row’s print; go to next row
+                            self._save_resume(idx, idx + 1, 0)
+                            idx += 1
+                            field0 = 0
+                            continue
+                        elif decision == "exit":
+                            self._save_resume(idx, idx, 0)
+                            self.paused = True
+                            break
+
+                    # START PRINT (G)
+                    try:
+                        try:
+                            self.q.put(("log", f"[FRAME] {self._preview_extended_frame('G', '', '')}"))
+                        except Exception:
+                            pass
+                        rs = self.dev.start_print()
+                        self.q.put(("log", f"[START] {self._short(rs)}"))
+                        logs.append_event(user_name, "print started", idx, line_text, None)
+                    except Exception as e:
+                        msg = f"start_print error: {e}"
+                        self.q.put(("log", f"[ERROR] {msg}"))
+                        logs.append_event(user_name, "print started", idx, line_text, msg)
+                        # ask row-level decision
+                        decision = self._timeout_decision(idx, "G", 0.0)
+                        if decision == "repeat":
+                            continue        # retry SAME ROW print
+                        elif decision == "continue":
+                            self._save_resume(idx, idx + 1, 0)
+                            idx += 1; field0 = 0
+                            continue
+                        elif decision == "exit":
+                            self._save_resume(idx, idx, 0)
+                            self.paused = True
+                            break
+
+                    if getattr(self, "paused", False) or not self.running:
+                        self._save_resume(idx, idx, 0)
+                        break
+
+                    # DONE/READY (row-level semantics)
+                    if not self.dev.wait_done_or_ready(DONE_TIMEOUT_S):
+                        self.q.put(("log", "[TIMEOUT] DONE/READY timeout"))
+                        logs.append_event(user_name, "print finished", idx, line_text, "DONE/READY timeout")
+                        decision = self._timeout_decision(idx, "DONE/READY", DONE_TIMEOUT_S)
+                        if decision == "repeat":
+                            # retry SAME ROW print
+                            continue
+                        elif decision == "continue":
+                            self._save_resume(idx, idx + 1, 0)
+                            idx += 1; field0 = 0
+                            continue
+                        elif decision == "exit":
+                            self._save_resume(idx, idx, 0)
+                            self.paused = True
+                            break
+                    else:
+                        logs.append_event(user_name, "print finished", idx, line_text, None)
+                        # row complete → next row
+                        self._save_resume(idx, idx + 1, 0)
+                        idx += 1
+                        field0 = 0
+
+                # finished this row (all fields), advance to next row
+                if not getattr(self, "paused", False) and self.running:
+                    if field_idx >= total_fields:
+                        idx += 1
+                        field0 = 0
+
+            # normal end
         except Exception as e:
             self.q.put(("log", f"[ERROR] {e}"))
         finally:
+            if getattr(self, "paused", False):
+                self.q.put(("log", "[PAUSE] Batch paused, use Start to resume."))
+            else:
+                self.q.put(("log", "[DONE] Batch complete"))
             self.q.put(("done", None))
 
         # ---------- UI PUMP / HELPERS ----------
@@ -2460,54 +2583,81 @@ class App(tk.Tk):
         s = s.replace("\r", "\\r")
         return s if len(s) <= 160 else s[:157] + "..."
 
-    def _save_resume(self, highlight_idx: int, next_idx: int):
+    def _save_resume(self, highlight_idx: int, next_idx: int, field_idx: int = 0):
             """Persist + update in-memory resume pointer."""
             self.cfg["resume"] = {
                 "path": self.cfg.get("last_csv", ""),
                 "highlight": int(highlight_idx),
                 "next": int(next_idx),
                 "pending": True,
+                "field": field_idx,
             }
             cs.save_config(self.cfg)
             self.resume_index = int(next_idx)
+            try:
+                self.current_field = int(field_idx)
+            except Exception:
+                self.current_field = 0
 
     def _clear_resume(self):
         """Clear persist + in-memory resume pointer."""
-        self.cfg["resume"] = {"path": "", "highlight": 0, "next": 0, "pending": False}
+        self.cfg["resume"] = {"path": "", "highlight": 0, "next": 0, "pending": False, "field": 0}
         cs.save_config(self.cfg)
         self.resume_index = 0
 
-    def _compute_start_index(self) -> int:
-        """Prefer persisted resume.next if it matches the current CSV; otherwise use in-memory resume_index."""
-        res = self.cfg.get("resume", {})
+    def _compute_start_index(self):
+        """
+        Return (row_idx, field_idx) start point.
+        Prefers persisted resume if it matches the current CSV; otherwise uses in-memory pointers.
+        """
+        res  = self.cfg.get("resume", {})
         last = self.cfg.get("last_csv", "")
+
+        # defaults from memory
+        row   = int(getattr(self, "resume_index", 0) or 0)
+        field = int(getattr(self, "current_field", 0) or 0)
+
         if res and res.get("pending") and res.get("path") and last and self.data:
-            # same file?
             try:
                 import os
                 if os.path.abspath(res["path"]) == os.path.abspath(last):
-                    nxt = max(0, min(int(res.get("next", 0)), len(self.data)))
-                    self.resume_index = nxt
-                    return nxt
+                    row = max(0, min(int(res.get("next", 0)), len(self.data)))
+                    if self.data and 0 <= row < len(self.data):
+                        row_len = len(self.data[row])
+                        field = max(0, min(int(res.get("field", 0)), max(0, row_len - 1)))
+                    else:
+                        field = 0
             except Exception:
                 pass
-        return int(getattr(self, "resume_index", 0) or 0)
 
+        if self.data and 0 <= row < len(self.data):
+            row_len = len(self.data[row])
+            field = 0 if row_len == 0 else max(0, min(field, row_len - 1))
+        else:
+            row = 0
+            field = 0
+
+        self.resume_index = row
+        self.current_field = field
+        return row, field
 
     def _apply_resume_after_csv_load(self):
-        """If a pending resume matches the loaded CSV, highlight it and remember next index."""
+        """If a pending resume matches the loaded CSV, highlight it and remember next row+field."""
         res = self.cfg.get("resume", {})
         path_ok = res.get("path") and os.path.abspath(res["path"]) == os.path.abspath(self.cfg.get("last_csv", ""))
         if res.get("pending") and path_ok and self.data:
             hi = max(0, min(int(res.get("highlight", 0)), len(self.data)-1))
             nx = max(0, min(int(res.get("next", 0)), len(self.data)))
+            field = max(0, int(res.get("field", 0)))
+
             self._highlight(hi)
             self.resume_index = nx
-            self._log(f"[RESUME] Highlight row {hi+1}, next to send: row {nx+1}")
-            # Make resume obvious in UI: enable Start if connected + data
+            self.current_field = field
+            self._log(f"[RESUME] Highlight row {hi+1}, next to send: row {nx+1}, field {field+1}")
             self._update_start_enabled()
         else:
-            self.resume_index = 0  # default
+            self.resume_index = 0
+            self.current_field = 0
 
     def _load_csv_path(self, path: str):
         with open(path, "r", encoding="utf-8-sig", newline="") as f:

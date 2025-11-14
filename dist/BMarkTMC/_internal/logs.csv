@@ -592,3 +592,13 @@ timestamp;user;state;row;line_content;error
 2025.11.13 09:13:39;admin;serial connected;0;COM1@9600 parity=N stop=1 bytesize=8;
 2025.11.13 09:13:48;admin;settings saved;0;"serial_port: COM1 -> COM1; baud: 9600 -> 9600; parity: N -> N; stopbits: 1 -> 1; pattern: test -> test";
 2025.11.13 09:13:48;admin;screen;0;[SETTINGS] Serial saved;
+2025.11.13 11:46:35;admin;serial disconnected;0;;
+2025.11.13 11:46:35;admin;serial disconnect;0;;
+2025.11.13 11:46:36;admin;serial connect;0;"port=COM1; baud=9600; parity=N; stopbits=1; bytesize=8";
+2025.11.13 11:46:36;admin;serial connected;0;COM1@9600 parity=N stop=1 bytesize=8;
+2025.11.13 11:46:49;admin;serial verification FAILED;0;COM1@9600 parity=N stop=1 bytesize=8;no CR-terminated status
+2025.11.13 11:47:37;admin;serial connect;0;"port=COM1; baud=9600; parity=N; stopbits=1; bytesize=8";
+2025.11.13 11:47:37;admin;serial connected;0;COM1@9600 parity=N stop=1 bytesize=8;
+2025.11.13 11:47:49;admin;serial verification FAILED;0;COM1@9600 parity=N stop=1 bytesize=8;no CR-terminated status
+2025.11.13 11:48:13;admin;serial connect;0;"port=COM1; baud=9600; parity=N; stopbits=1; bytesize=8";
+2025.11.13 11:48:13;admin;serial connected;0;COM1@9600 parity=N stop=1 bytesize=8;
