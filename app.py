@@ -1589,7 +1589,12 @@ class App(tk.Tk):
 
         mb_settings = tk.Label(bar, text="Settings", bg=_bar_bg, padx=10, pady=4, cursor="hand2")
         mb_settings.pack(side="left")
-
+    
+    # keep handles + remember original colors (for restore)
+        self.mb_app = mb_app
+        self.mb_settings = mb_settings
+        self._mb_app_fg = self.mb_app.cget("fg") or "#000000"
+        self._mb_settings_fg = self.mb_settings.cget("fg") or "#000000"
 
         # # Hook the real menus to the menubuttons
         # mb_app["menu"] = self.menu_app
@@ -1638,7 +1643,9 @@ class App(tk.Tk):
         self.lbl_role = ttk.Label(top, text="Role: -")
         self.lbl_role.pack(side="left", padx=(0, 8))
 
-        ttk.Button(top, text="Load CSV", command=self._load_csv).pack(side="left", padx=6)
+        self.btn_load_csv = ttk.Button(top, text="Load CSV", command=self._load_csv)
+        self.btn_load_csv.pack(side="left", padx=6)
+
 
         ttk.Label(top, text="Pattern:").pack(side="left", padx=(12, 4))
         self.ent_pattern = ttk.Entry(top, width=24)
@@ -1662,7 +1669,15 @@ class App(tk.Tk):
 
         mb_app.bind("<Enter>", _hover_on);     mb_app.bind("<Leave>", _hover_off)
         mb_settings.bind("<Enter>", _hover_on);mb_settings.bind("<Leave>", _hover_off)
+        self._menus_enabled = True
 
+        def _popup_under(widget, menu):
+            # hard-disable menubar by gate flag
+            if not getattr(self, "_menus_enabled", True):
+                return
+            x = widget.winfo_rootx()
+            y = widget.winfo_rooty() + widget.winfo_height()
+            menu.tk_popup(x, y); menu.grab_release()
 
         def _pattern_changed(_evt=None):
             new = self.ent_pattern.get().strip()
@@ -1743,6 +1758,16 @@ class App(tk.Tk):
 
         # Pump queue
         self.after(80, self._pump)
+    def _menubar_set_disabled_color(self, disabled: bool):
+        """Only change the color of 'App' and 'Settings' when disabled/enabled."""
+        try:
+            self.mb_app.configure(fg=("#888888" if disabled else self._mb_app_fg))
+        except Exception:
+            pass
+        try:
+            self.mb_settings.configure(fg=("#888888" if disabled else self._mb_settings_fg))
+        except Exception:
+            pass
 
     # ---------- LOGIN FLOW ----------
     def _show_login(self):
@@ -1986,6 +2011,16 @@ class App(tk.Tk):
             self._set_status(f"Connected {port} @ {self.cfg['serial']['baud']}")
             self.btn_connect["state"] = "disabled"; self.btn_disconnect["state"] = "normal"
             self._update_start_enabled()
+            # color only: menubar looks disabled
+            self._menubar_set_disabled_color(True)
+
+            # DISABLE top menus + Load CSV + Pattern
+            self._menus_enabled = False
+            try: self.btn_load_csv["state"] = "disabled"
+            except Exception: pass
+            try: self.ent_pattern["state"] = "disabled"
+            except Exception: pass
+
             # after successful connect
             self._audit("serial connect", f"port={port}; baud={kwargs['baudrate']}; parity={self.cfg['serial'].get('parity')}; stopbits={self.cfg['serial'].get('stopbits')}; bytesize={self.cfg['serial'].get('databits')}")
             try:
@@ -2019,6 +2054,7 @@ class App(tk.Tk):
                         self.btn_disconnect["state"] = "disabled"
                         self.btn_start["state"] = "disabled"
                         self._set_status("Not connected")
+                        self._disconnect()
                         messagebox.showerror("Serial", "Printer did not respond to status poll.\nCheck cable/port and controller power.")
                         return
                     else:
@@ -2046,6 +2082,16 @@ class App(tk.Tk):
         self._set_status("Not connected")
         self.btn_connect["state"] = "normal"; self.btn_disconnect["state"] = "disabled"
         self.btn_start["state"] = "disabled"
+        # color only: if your logic re-enables menus here, restore color now
+        # (if you only re-enable after STOP, you can skip this and do it in _stop)
+        self._menubar_set_disabled_color(False)
+
+        # ENABLE top menus + Load CSV + Pattern
+        self._menus_enabled = True
+        try: self.btn_load_csv["state"] = "normal"
+        except Exception: pass
+        try: self.ent_pattern["state"] = "normal"
+        except Exception: pass
                 
         # in _disconnect()
         self._audit("serial disconnect", "")
@@ -2115,6 +2161,13 @@ class App(tk.Tk):
         self.paused = True
         self.stopped = True 
         self.btn_stop["state"] = "disabled"
+        # If your policy is "enable back only after STOP + DISCONNECT", restore color here
+        is_connected = bool(getattr(self, "dev", None)
+                            and getattr(getattr(self, "dev", None), "ser", None)
+                            and getattr(self.dev.ser, "is_open", False))
+        if not is_connected:
+            self._menubar_set_disabled_color(False)
+
         try:
             logs.append_event(getattr(self.user,"username",""), "print paused", -1, "operator requested stop", None)
         except Exception:
@@ -2245,14 +2298,14 @@ class App(tk.Tk):
                         except Exception:
                             pass
                         try:
-                            ok = self.dev.provide_and_verify_query_text(buf_no, value)
-                            status = "OK" if ok else "MISMATCH"
-                            self.q.put(("log", f"[Q] buf {buf_no:02d} <- {value} | {status}"))
+                            resp = self.dev.provide_query_text(buf_no, value)
+                            self.q.put(("log", f"[Q] buf {buf_no:02d} <- {value} | {self._short(resp)}"))
                             sent += 1
                         except Exception as e:
                             error_text = str(e)
                             self.q.put(("log", f"[ERROR] provide_query_text({buf_no}) -> {e}"))
                             break
+
 
                     # paused while sending: stay on this row
                     if getattr(self, "paused", False) or not self.running:

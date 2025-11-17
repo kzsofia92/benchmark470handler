@@ -10,9 +10,11 @@
   "pattern": "test",
   "resume": {
     "path": "C:/Users/Logisztika/Documents/bigtest.log.csv",
-    "highlight": 14,
-    "next": 14,
-    "pending": true
+    "highlight": 18,
+    "next": 18,
+    "pending": true,
+    "field": 0
   },
-  "connection_mode": "live"
+  "connection_mode": "test",
+  "data_send_mode": "Q"
 }

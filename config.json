@@ -16,5 +16,5 @@
     "field": 0
   },
   "connection_mode": "test",
-  "data_send_mode": "V"
+  "data_send_mode": "Q"
 }

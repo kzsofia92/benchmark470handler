@@ -328,11 +328,12 @@ class TMC470:
     def poll_query_text(self, buffer_number_1based: int) -> Optional[str]:
         buf_id = format_field_id(buffer_number_1based)
         return self._txrx("QUERY_POLL", buf_id)
-
+    
     def provide_and_verify_query_text(self, buffer_number_1based: int, value: str) -> bool:
         self.provide_query_text(buffer_number_1based, value)
         r = self.poll_query_text(buffer_number_1based) or ""
         return value in r
+
 
     # Poll IO / Status
     def poll_io(self) -> Tuple[bool, str]:
