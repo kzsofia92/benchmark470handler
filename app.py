@@ -57,31 +57,28 @@ TIMEOUT_ROW_BG = "#ffe2cc"   # light orange
 
 
 def center(win):
-    """Center any Toplevel or root safely on all Tk builds."""
+    """Center any Toplevel or root using manual screen geometry."""
+    # Layout kiszámítása
     win.update_idletasks()
-    # Try built-in Tk placer first
-    try:
-        # ensure the window is mapped/visible before placing
-        try:
-            win.wait_visibility()
-        except Exception:
-            pass
-        win.tk.call('tk::PlaceWindow', str(win), 'center')
-        return
-    except Exception:
-        pass  # fall back to manual
-
-    # Manual fallback
+    # Képernyő méret
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    # Ablak méret (ha még nem realizált, kérjük le újra)
     ww, wh = win.winfo_width(), win.winfo_height()
     if ww <= 1 or wh <= 1:
-        # if not realized yet, give it a reasonable default
-        win.geometry("+0+0")
-        win.update_idletasks()
-        ww, wh = win.winfo_width(), win.winfo_height()
-    x = max((sw - ww) // 2, 0)
-    y = max((sh - wh) // 2, 0)
-    win.geometry(f"+{x}+{y}")
+        try:
+            win.update_idletasks()
+            ww, wh = win.winfo_width(), win.winfo_height()
+        except Exception:
+            pass
+    # Középpont kiszámítása, bal/felső minimum 0
+    try:
+        x = max((sw - ww) // 2, 0)
+        y = max((sh - wh) // 2, 0)
+        win.geometry(f"+{x}+{y}")
+    except Exception:
+        # ha valamiért nem megy, hagyjuk ahol van
+        pass
+
 
 def center_on_parent(win, parent=None):
     """Center Toplevel on parent (or screen) reliably."""
@@ -263,12 +260,13 @@ class Login(tk.Toplevel):
 class SettingsDialog(tk.Toplevel):
     def __init__(self, master, cfg: dict, on_save):
         super().__init__(master)
+        self.withdraw()
         self.title("Settings ⚙️")
         self.resizable(False, False)
         self.on_save = on_save
         self.cfg = cfg
         self.transient(master)
-        center(self)
+        # center(self)
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -316,23 +314,69 @@ class SettingsDialog(tk.Toplevel):
         self.ent_pattern.insert(0, cfg.get("pattern", ""))
         self.ent_pattern.grid(row=5, column=1, sticky="we")
 
-        # Row 6 — Connection mode (moved to its own row; comment typo fixed)
+        # Row 6 — Connection mode
         ttk.Label(frm, text="Connection mode").grid(row=6, column=0, sticky="e", pady=4, padx=4)
         self.cb_mode = ttk.Combobox(frm, width=22, state="readonly", values=["test", "live"])
         self.cb_mode.set(cfg.get("connection_mode", "test"))
         self.cb_mode.grid(row=6, column=1, sticky="we")
 
-        # Row 6 — Connection mode (moved to its own row; comment typo fixed)
-        ttk.Label(frm, text="Data mode (V = Variable text, Q = Query text) ").grid(row=7, column=0, sticky="e", pady=4, padx=4)
-        self.cb_data_mode = ttk.Combobox(frm, width=22, state="readonly", values=["V", "Q"])
-        self.cb_data_mode.set(cfg.get("data_send_mode", "Q"))
-        self.cb_data_mode.grid(row=7, column=1, sticky="we")
+        # Row 7 — Data send mode (V / Q / CUSTOM)
+               # Row 7 — Data mode (+ column-level editor)
+        ttk.Label(frm, text="Data mode").grid(
+            row=7, column=0, sticky="e", pady=4, padx=4
+        )
 
-        # Row 8 — Buttons
+        row7 = ttk.Frame(frm)
+        row7.grid(row=7, column=1, sticky="we")
+        row7.columnconfigure(0, weight=1)
+
+        # allow V / Q / CUSTOM
+        self.cb_data_mode = ttk.Combobox(
+            row7,
+            width=10,
+            state="readonly",
+            values=["V", "Q", "CUSTOM"],
+        )
+        self.cb_data_mode.set(cfg.get("data_send_mode", "Q"))
+        self.cb_data_mode.grid(row=0, column=0, sticky="we")
+
+        # "..." button – opens column mode dialog in the main window
+        def _edit_columns():
+            master = self.master
+            # only do something if App actually has _ask_column_modes
+            fn = getattr(master, "_ask_column_modes", None)
+            if callable(fn):
+                fn()
+            else:
+                messagebox.showinfo(
+                    "Column modes",
+                    "Column mode editor is not available in this build."
+                )
+
+        btn_cols = ttk.Button(row7, text="...", width=3, command=_edit_columns)
+        btn_cols.grid(row=0, column=1, padx=(4, 0))
+
+        #(V = Variable, Q = Query CUSTOM = user defines for each column)
+        ttk.Label(frm, text="V = Variable, Q = Query CUSTOM = user defines for each column").grid(row=8, column=0,  columnspan=2, sticky="ew", pady=4, padx=4)
+
+
+        # Row 9 — Buttons
         btns = ttk.Frame(frm)
-        btns.grid(row=8, column=0, columnspan=2, pady=10)
+        btns.grid(row=9, column=0, columnspan=2, pady=10)
         ttk.Button(btns, text="Save", command=self._save).pack(side="left", padx=6)
         ttk.Button(btns, text="Cancel", command=self._close).pack(side="left", padx=6)
+
+               # ----- final: center like login, then show -----
+        self.update_idletasks()
+        try:
+            center(self)
+        except Exception:
+            pass
+        self.deiconify()
+        self.lift()
+        self.attributes("-topmost", True)
+        self.after(0, lambda: self.attributes("-topmost", False))
+        self.grab_set()
 
 
     def _save(self):
@@ -352,6 +396,8 @@ class SettingsDialog(tk.Toplevel):
     def _close(self):
         self.grab_release()
         self.destroy()
+
+    
 
 #----------TIMEOUT DECISION DIALOG----------
 class TimeoutDialog(tk.Toplevel):
@@ -417,6 +463,7 @@ class TimeoutDialog(tk.Toplevel):
 class UserManagementDialog(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
+        self.withdraw()
         self.title("Users")
         self.resizable(False, False)
         self.transient(master)   # tie to parent
@@ -450,15 +497,18 @@ class UserManagementDialog(tk.Toplevel):
         self._reload()
 
         # ---- Center AFTER layout & make sure it's visible on top ----
+               # ----- final: center like login, then show -----
         self.update_idletasks()
         try:
-            center(self)  # uses your helper: win.tk.call('tk::PlaceWindow', ..., 'center')
+            center(self)
         except Exception:
             pass
+        self.deiconify()
         self.lift()
         self.attributes("-topmost", True)
         self.after(0, lambda: self.attributes("-topmost", False))
-        self.grab_set()  # modal
+        self.grab_set()
+
 
     def _reload(self):
         for iid in self.tree.get_children():
@@ -653,8 +703,10 @@ class SimpleChangeRole(tk.Toplevel):
     def _close(self): self.grab_release(); self.destroy()
 #--------------------- LOG VIEWER ---------------------
 class LogViewer(tk.Toplevel):
-    def __init__(self, master):
+    def __init__(self, master,  can_clear: bool = True):
         super().__init__(master)
+        self.withdraw()
+        self._can_clear = bool(can_clear)
         try:
             self.geometry("1200x800"); self.minsize(900, 600)
         except Exception:
@@ -703,7 +755,10 @@ class LogViewer(tk.Toplevel):
         ttk.Button(bar1, text="Apply", command=self._apply_search).pack(side="left", padx=6)
 
         ttk.Button(bar1, text="Export XLSX…", command=self._handle_export).pack(side="left", padx=6)
-        ttk.Button(bar1, text="Clear (archive)", command=self._clear_backup).pack(side="right")
+        self.btn_clear = ttk.Button(bar1, text="Clear (archive)", command=self._clear_backup)
+        if not self._can_clear:
+            self.btn_clear.config(state="disabled")
+        self.btn_clear.pack(side="right")
 
         # ---------- ROW 2: Date filter (mode + arrows + range + custom From/To) ----------
         # requires: import datetime (top of file) and the helper methods you already added:
@@ -734,12 +789,21 @@ class LogViewer(tk.Toplevel):
         ttk.Button(bar2, text=">>", width=3, command=lambda: self._shift_anchor(+7)).pack(side="left", padx=2)
 
         ttk.Label(bar2, text="From").pack(side="left", padx=(12, 4))
-        self.ent_from = ttk.Entry(bar2, width=11)  # YYYY-MM-DD
+        self.ent_from = ttk.Entry(bar2, width=11)  # YYYY.MM.DD
         self.ent_from.pack(side="left")
 
         ttk.Label(bar2, text="To").pack(side="left", padx=(8, 4))
         self.ent_to = ttk.Entry(bar2, width=11)
         self.ent_to.pack(side="left")
+
+                # Date Apply button – only meaningful in Custom mode
+        self.btn_date_apply = ttk.Button(
+            bar2,
+            text="Apply date filter",
+            command=self._on_custom_dates_changed
+        )
+        self.btn_date_apply.pack(side="left", padx=6)
+        self.btn_date_apply.configure(state="disabled")  # only enabled in Custom
 
         # keep your Enter-to-apply
         self.ent_from.bind("<Return>", lambda _e=None: self._on_custom_dates_changed())
@@ -810,13 +874,18 @@ class LogViewer(tk.Toplevel):
         # If your _load() doesn't call these, ensure:
         # self._date_mode.set("(all)"); self._compute_range(); self._apply_filter()
 
+       # ----- final: center like login, then show -----
         self.update_idletasks()
         try:
-            self.wait_visibility()
-            if 'center' in globals():
-                center(self)
+            center(self)
         except Exception:
             pass
+        self.deiconify()
+        self.lift()
+        self.attributes("-topmost", True)
+        self.after(0, lambda: self.attributes("-topmost", False))
+        self.grab_set()
+
 
     def _on_header_click(self, event):
         """
@@ -1077,10 +1146,13 @@ class LogViewer(tk.Toplevel):
             txt = e.get().strip()
             if not txt:
                 return None
-            try:
-                return datetime.date.fromisoformat(txt)
-            except Exception:
-                return None
+            # accept YYYY.MM.DD and YYYY-MM-DD
+            for fmt in ("%Y.%m.%d", "%Y-%m-%d"):
+                try:
+                    return datetime.datetime.strptime(txt, fmt).date()
+                except Exception:
+                    continue
+            return None
         d0 = _parse_box(self.ent_from)
         d1 = _parse_box(self.ent_to)
         if not d0 and not d1:
@@ -1096,6 +1168,17 @@ class LogViewer(tk.Toplevel):
 
     def _on_date_mode(self):
         """Mode changed: compute range and auto-apply (state+tag+date)."""
+        mode = self._date_mode.get()
+
+        # Enable the date-Apply button only in Custom mode
+        try:
+            self.btn_date_apply.configure(
+                state="normal" if mode == "Custom" else "disabled"
+            )
+        except Exception:
+            # button might not exist yet during very early init; ignore
+            pass
+
         self._compute_range()
         self._apply_filter()   # your existing auto-filter (state+tag already)
 
@@ -1112,15 +1195,23 @@ class LogViewer(tk.Toplevel):
                 txt = e.get().strip()
                 if not txt:
                     return
-                try:
-                    d = datetime.date.fromisoformat(txt)
-                    d2 = d + datetime.timedelta(days=delta_days)
-                    e.delete(0, "end")
-                    e.insert(0, d2.strftime("%Y.%m.%d"))
-                except Exception:
-                    pass
+                d = None
+                # accept YYYY.MM.DD and YYYY-MM-DD
+                for fmt in ("%Y.%m.%d", "%Y-%m-%d"):
+                    try:
+                        d = datetime.datetime.strptime(txt, fmt).date()
+                        break
+                    except Exception:
+                        d = None
+                if not d:
+                    return
+                d2 = d + datetime.timedelta(days=delta_days)
+                e.delete(0, "end")
+                e.insert(0, d2.strftime("%Y.%m.%d"))
+
             _shift_box(self.ent_from)
             _shift_box(self.ent_to)
+
         self._compute_range()
         self._apply_filter()
 
@@ -1315,6 +1406,12 @@ class LogViewer(tk.Toplevel):
 
     def _clear_backup(self):
         from tkinter import messagebox
+
+        if not getattr(self, "_can_clear", True):
+            messagebox.showerror("Logs", "Only admin can backup and clear the log.")
+            return
+
+
         if not messagebox.askyesno("Logs", "Backup current log and clear?"):
             return
         try:
@@ -1419,7 +1516,7 @@ class LogViewer(tk.Toplevel):
             return "break"
 
         # handle '-' explicitly: only at positions 4 or 7 and not duplicated
-        if ch == "-":
+        if ch == ".":
             idx = entry.index("insert")
             if idx in (4, 7):
                 text = entry.get()
@@ -1463,7 +1560,7 @@ class LogViewer(tk.Toplevel):
             return False
         # allowed chars and positions
         for i, ch in enumerate(proposed):
-            if ch == "-":
+            if ch == ".":
                 if i not in (4, 7):
                     return False
             elif not ch.isdigit():
@@ -1521,6 +1618,103 @@ class LogViewer(tk.Toplevel):
         return "break"
 
 
+class ColumnModeDialog(tk.Toplevel):
+    """
+    Lets the user choose, for each CSV column, whether it should send
+    Variable (V) or Query (Q) text.
+    """
+    def __init__(self, master, headers, default_mode: str, on_ok):
+        super().__init__(master)
+        self.title("Column data modes")
+        self.resizable(False, False)
+        self.transient(master)
+        self.on_ok = on_ok
+
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(
+            frm,
+            text="For each CSV column, choose whether to send it as\n"
+                 "Variable text (V) or Query text (Q).",
+            justify="left"
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        self._combos: list[ttk.Combobox] = []
+        mode_values = ["V", "Q"]
+
+        # normalize default mode
+        default_mode = "Q" if (default_mode or "").upper() == "Q" else "V"
+
+        # try to get per-column current/saved modes from master
+        initial_modes: list[str]
+        try:
+            col_modes = list(getattr(master, "column_modes", []))
+        except Exception:
+            col_modes = []
+
+        if col_modes and len(col_modes) == len(headers):
+            # use existing mapping, normalize each to V/Q
+            initial_modes = [
+                "Q" if (m or "").upper() == "Q" else "V"
+                for m in col_modes
+            ]
+        else:
+            # no valid stored mapping → all default
+            initial_modes = [default_mode] * len(headers)
+
+        for i, h in enumerate(headers):
+            ttk.Label(frm, text=h or f"Col {i+1}").grid(
+                row=i+1, column=0, sticky="e", padx=(0, 6), pady=2
+            )
+            cb = ttk.Combobox(frm, width=5, state="readonly", values=mode_values)
+            cb.set(initial_modes[i] if i < len(initial_modes) else default_mode)
+            cb.grid(row=i+1, column=1, sticky="w", pady=2)
+            self._combos.append(cb)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=len(headers) + 1, column=0, columnspan=2, pady=(10, 0))
+        ttk.Button(btns, text="OK", command=self._ok).pack(side="left", padx=4)
+        ttk.Button(btns, text="Cancel", command=self._cancel).pack(side="left", padx=4)
+
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.update_idletasks()
+        try:
+            center_on_parent(self, master)
+        except Exception:
+            pass
+        self.grab_set()
+        self.lift()
+        self.focus_force()
+
+
+    def _ok(self):
+        modes = []
+        for cb in self._combos:
+            m = (cb.get() or "").upper()
+            modes.append("Q" if m == "Q" else "V")
+        try:
+            self.on_ok(modes)
+        except Exception:
+            pass
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+    def _cancel(self):
+        # Signal cancel with None – caller decides fallback
+        try:
+            self.on_ok(None)
+        except Exception:
+            pass
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+
 # -------------------- MAIN APP --------------------
 class App(tk.Tk):
     def __init__(self):
@@ -1550,11 +1744,130 @@ class App(tk.Tk):
         self.header: List[str] = []
         self.data: List[List[str]] = []
 
+        self.header: List[str] = []
+        self.data: List[List[str]] = []
+        self.column_modes: List[str] = []  # "V" or "Q" per column
+        self.custom_column_modes = None   
+
         self._build_ui()
         center(self)   
         # Hide main until login succeeds
         # self.withdraw()
         self._show_login()
+
+    def _ask_column_modes(self):
+        """
+        Ask the user per-column whether to send as V or Q for the CURRENT CSV.
+        Stores result in:
+          - self.column_modes           -> effective modes used by the worker
+          - self.custom_column_modes    -> remembered CUSTOM setup for this CSV
+          - self.cfg["column_modes_*"] -> persisted across app restarts
+        """
+        headers = self.header or []
+        if not headers:
+            n = len(self.data[0]) if self.data else 0
+            headers = [f"Col {i+1}" for i in range(n)]
+
+        try:
+            mode = str(self.cfg.get("data_send_mode", "Q")).strip().upper()
+        except Exception:
+            mode = "Q"
+
+        default_mode = "Q" if mode == "Q" else "V"
+
+        result = {"modes": None}
+
+        def _on_ok(modes):
+            result["modes"] = modes
+
+        dlg = ColumnModeDialog(self, headers, default_mode, _on_ok)
+        self.wait_window(dlg)
+
+        modes = result["modes"]
+        if not modes:
+            # user cancelled → fall back to all-default
+            n = len(headers)
+            modes = [default_mode] * n
+
+        normalized = [("Q" if (m or "").upper() == "Q" else "V") for m in modes]
+        self.column_modes = normalized
+        self.custom_column_modes = list(normalized)
+
+        # 🔴 PERSIST FOR NEXT RESTART
+        try:
+            self.cfg["column_modes_header"] = list(self.header or headers)
+            self.cfg["column_modes"] = list(self.column_modes)
+            cs.save_config(self.cfg)
+            self._log("[COLUMNS] Column modes saved to config for reuse on next start.")
+        except Exception as e:
+            self._log(f"[COLUMNS] Could not save column modes to config: {e}")
+
+        self._log(
+            "[COLUMNS] Modes set: "
+            + ", ".join(f"{h}={m}" for h, m in zip(headers, self.column_modes))
+        )
+
+
+    def _apply_data_send_mode(self, prev_cfg: Optional[dict] = None):
+        """
+        Recalculate column_modes and update the table immediately
+        when data_send_mode changes.
+
+        - If mode = V → all columns V
+        - If mode = Q → all columns Q
+        - If mode = CUSTOM:
+            - if we already have custom modes for this CSV, reuse them
+            - otherwise open the column-mode dialog once
+        - Keep current start row / selection visible.
+        """
+        if not self.data:
+            # nothing loaded, nothing to update
+            return
+
+        # Remember row info so we can restore it after header rebuild
+        prev_row = getattr(self, "current_index", -1)
+        prev_override = self.override_start_index
+
+        # How many columns?
+        ncols = len(self.header) if self.header else (len(self.data[0]) if self.data else 0)
+        if ncols <= 0:
+            return
+
+        try:
+            new_mode = str(self.cfg.get("data_send_mode", "Q")).strip().upper()
+        except Exception:
+            new_mode = "Q"
+        if new_mode not in ("V", "Q", "CUSTOM"):
+            new_mode = "Q"
+
+        if new_mode == "CUSTOM":
+            # same CSV: if we already have a custom setup, just reuse it
+            if self.custom_column_modes and len(self.custom_column_modes) == ncols:
+                self.column_modes = list(self.custom_column_modes)
+                self._log("[COLUMNS] Restored saved CUSTOM modes for current CSV.")
+            else:
+                # no valid custom setup yet → ask user once
+                try:
+                    self._ask_column_modes()
+                except Exception as e:
+                    self._log(f"[COLUMNS] Could not open column mode dialog: {e}")
+                    default_mode = "Q"
+                    self.column_modes = [default_mode] * ncols
+        else:
+            default_mode = "Q" if new_mode == "Q" else "V"
+            self.column_modes = [default_mode] * ncols
+            self._log(f"[COLUMNS] Global mode {new_mode}: all columns → {default_mode}.")
+
+        # Rebuild table so header marks ([V]/[Q]) update
+        self._rebuild_table()
+
+        # Restore row highlight / start info
+        if prev_override is not None and 0 <= prev_override < len(self.data):
+            # Manual "Start from row" should stay the same
+            self._highlight(prev_override)
+        elif 0 <= prev_row < len(self.data):
+            # No manual override; just keep the previous highlighted row
+            self._highlight(prev_row)
 
     def _build_ui(self):
         # Menubar
@@ -1823,14 +2136,16 @@ class App(tk.Tk):
         state = "normal" if is_admin else "disabled"
         self.menu_settings.entryconfig("Serial…", state=state)
         self.menu_settings.entryconfig("Users…", state=state)
-        self.menu_settings.entryconfig("Logs…", state=state)
 
+        logs_state = "normal" if self.user else "disabled"
+        self.menu_settings.entryconfig("Logs…", state=logs_state)
 
         # ---------- SETTINGS ----------
     def _open_serial_settings(self):
         if not (self.user and self.user.role == "admin"):
             messagebox.showerror("Restricted", "Only admin can open Serial Settings.")
             return
+
         def save(cfg):
             # compare old vs new and log
             old = self.cfg
@@ -1846,11 +2161,19 @@ class App(tk.Tk):
                     old.get("pattern",""), cfg.get("pattern",""),
                 )
             )
+
             cs.save_config(cfg)
             self.cfg = cfg
             self._log("[SETTINGS] Serial saved")
             # refresh last pattern tracker too
             self._pattern_last = self.cfg.get("pattern","") or self._pattern_last
+
+            # NEW: re-apply data_send_mode immediately to current CSV / columns
+            try:
+                self._apply_data_send_mode(prev_cfg=old)
+            except Exception as e:
+                self._log(f"[SETTINGS] Could not apply data send mode: {e}")
+
         SettingsDialog(self, self.cfg, save)
 
 
@@ -1878,14 +2201,14 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("CSV error", str(e))
 
-    def _load_csv_path(self, path: str):
-        with open(path, "r", encoding="utf-8-sig", newline="") as f:
-            text = f.read()
-        header, rows, used_delim = self._parse_csv_text(text)
-        self.header = header
-        self.data   = rows
-        self._rebuild_table()
-        self._log(f"[CSV] Loaded {len(self.data)} rows (delimiter='{used_delim}')")
+    # def _load_csv_path(self, path: str):
+    #     with open(path, "r", encoding="utf-8-sig", newline="") as f:
+    #         text = f.read()
+    #     header, rows, used_delim = self._parse_csv_text(text)
+    #     self.header = header
+    #     self.data   = rows
+    #     self._rebuild_table()
+    #     self._log(f"[CSV] Loaded {len(self.data)} rows (delimiter='{used_delim}')")
 
     def _apply_resume_after_csv_load(self):
         """If resume info matches current CSV, highlight + set next index; else reset."""
@@ -1950,33 +2273,32 @@ class App(tk.Tk):
         return header, rows, delim
 
     def _rebuild_table(self):
-        headers = self.header if self.header else [f"Col {i+1}" for i in range(len(self.data[0]) if self.data else 0)]
+        if self.header:
+            headers = list(self.header)
+        else:
+            n = len(self.data[0]) if self.data else 0
+            headers = [f"Col {i+1}" for i in range(n)]
+
+        # Add a visible mark: [V] or [Q] in front of each header
+        col_modes = getattr(self, "column_modes", None)
+        if col_modes:
+            decorated = []
+            for i, h in enumerate(headers):
+                mark = ""
+                if i < len(col_modes):
+                    m = (col_modes[i] or "").upper()
+                    if m == "V":
+                        mark = "[V] "
+                    elif m == "Q":
+                        mark = "[Q] "
+                decorated.append(f"{mark}{h}")
+            headers = decorated
+
         self.sheet.headers(headers)
         self.sheet.set_sheet_data(self.data or [])
-        try:
-            # auto size, then clamp super-wide columns
-                    # content-based widths, then fill remaining width
-            try:
-                self.sheet.set_all_cell_sizes_to_text(redraw=False)
-            except Exception:
-                pass
-            fit_sheet_fullwidth(self.sheet)  # uses the helper
-            try:
-                self.sheet.refresh()
-            except Exception:
-                pass
 
-            # keep your existing log line; do NOT reference used_delim here
-            try:
-                logs.append_event(getattr(self.user, "username", ""),
-                                "data stream loaded",
-                                -1,
-                                f"CSV loaded: {self.cfg.get('last_csv','')}",
-                                None)
-            except Exception:
-                pass
-        except Exception:
-            self.sheet.refresh()
+        # (keep the rest of your _rebuild_table as it was: column widths, readonly, etc.)
+
 
 
     # ---------- SERIAL ----------
@@ -2222,21 +2544,34 @@ class App(tk.Tk):
             return
         self._set_start_from(idx)
 
-
     def _batch_worker(self, pattern: Optional[str], start_index: Optional[int] = None, start_field: Optional[int] = None):
         """
         Batch sender with:
         - Correct highlight timing (immediate)
         - Resume by (row, field)
-        - Q mode (row-based): 1 print per row, REPEAT = same row, CONTINUE = next row
-        - V mode (field-based): 1 print per cell, REPEAT = same field, CONTINUE = next field
+        - Per-column V/Q mode:
+            * For each column:
+                - if mode_for_field == 'V' → send Variable text (Vnn via set_var)
+                - if mode_for_field == 'Q' → send Query text  (Qnn via provide_query_text)
+            * Separate index spaces for V and Q:
+                - first V-field in row -> V01
+                - first Q-field in row -> Q01
+            * After all fields of the row are sent, ONE print (G) per row.
         """
         user_name = getattr(self.user, "username", "") if self.user else ""
+
+        # global data_send_mode: V, Q or CUSTOM
         try:
-            mode = str(self.cfg.get("data_send_mode", "V")).strip().upper()
+            mode = str(self.cfg.get("data_send_mode", "Q")).strip().upper()
         except Exception:
-            mode = "V"
-        use_query_mode = (mode == "Q")
+            mode = "Q"
+
+        is_custom = (mode == "CUSTOM")
+        if mode not in ("V", "Q", "CUSTOM"):
+            mode = "Q"
+
+        # default field mode if column_modes is missing/short
+        default_mode = "Q" if mode == "Q" else "V"
 
         try:
             # --- PUT ONLINE ---
@@ -2266,32 +2601,76 @@ class App(tk.Tk):
             row0   = start_index if start_index is not None else 0
             field0 = start_field if start_field is not None else 0
 
-            # ---------------- Q MODE: row-based ----------------
-            if use_query_mode:
-                idx = row0
-                while idx < len(self.data):
+            idx = row0
+            while idx < len(self.data):
+                if not self.running:
+                    break
+
+                # highlight row immediately
+                self.q.put(("hl", idx))
+
+                # handle pause before doing anything with this row
+                if getattr(self, "paused", False):
+                    self._save_resume(idx, idx, field0 if idx == row0 else 0)
+                    break
+
+                row = self.data[idx]
+                line_text = ";".join("" if c is None else str(c) for c in row)
+
+                total_fields = len(row)
+                # if resuming in the middle of a row, continue from that field
+                field_idx = field0 if idx == row0 else 0
+
+                # local copy of column_modes
+                col_modes = list(getattr(self, "column_modes", [])) if hasattr(self, "column_modes") else []
+
+                # compute V/Q counters for fields that were already sent in this row
+                v_index = 0
+                q_index = 0
+                if field_idx > 0:
+                    for ci in range(field_idx):
+                        # determine mode for column ci
+                        if is_custom and col_modes and ci < len(col_modes):
+                            m_ci = (col_modes[ci] or "").upper()
+                            if m_ci in ("V", "Q"):
+                                mode_ci = m_ci
+                            else:
+                                mode_ci = default_mode
+                        else:
+                            mode_ci = default_mode
+
+                        if mode_ci == "Q":
+                            q_index += 1
+                        else:
+                            v_index += 1
+
+                # ---------- 1) SEND ALL FIELDS (V or Q) FOR THIS ROW ----------
+                while field_idx < total_fields:
                     if not self.running:
                         break
                     if getattr(self, "paused", False):
-                        self._save_resume(idx, idx, 0)
+                        # paused while sending fields → remember exact field
+                        self._save_resume(idx, idx, field_idx)
                         break
 
-                    row = self.data[idx]
-                    line_text = ";".join("" if c is None else str(c) for c in row)
+                    value = "" if row[field_idx] is None else str(row[field_idx])
 
-                    # highlight immediately
-                    self.q.put(("hl", idx))
+                    # Decide mode for this column: 'V' or 'Q'
+                    if is_custom and col_modes and field_idx < len(col_modes):
+                        m = (col_modes[field_idx] or "").upper()
+                        if m in ("V", "Q"):
+                            mode_for_field = m
+                        else:
+                            mode_for_field = default_mode
+                    else:
+                        # global V or Q for the whole table
+                        mode_for_field = default_mode
 
-                    sent = 0
-                    error_text = None
-                    total = min(len(row), 100)
-
-                    # send Q01..QNN
-                    for col_idx in range(total):
-                        if not self.running or getattr(self, "paused", False):
-                            break
-                        buf_no = col_idx + 1
-                        value = "" if row[col_idx] is None else str(row[col_idx])
+                    # --- Send according to mode_for_field ---
+                    if mode_for_field == "Q":
+                        # QUERY TEXT: Qnn, with its own index
+                        q_index += 1
+                        buf_no = q_index
 
                         try:
                             self.q.put(("log", f"[FRAME] {self._preview_extended_frame('Q', f'{buf_no:02d}', value)}"))
@@ -2300,257 +2679,161 @@ class App(tk.Tk):
                         try:
                             resp = self.dev.provide_query_text(buf_no, value)
                             self.q.put(("log", f"[Q] buf {buf_no:02d} <- {value} | {self._short(resp)}"))
-                            sent += 1
                         except Exception as e:
-                            error_text = str(e)
-                            self.q.put(("log", f"[ERROR] provide_query_text({buf_no}) -> {e}"))
-                            break
-
-
-                    # paused while sending: stay on this row
-                    if getattr(self, "paused", False) or not self.running:
-                        if sent < total and error_text is None:
-                            logs.append_event(user_name, "data partially transferred", idx, line_text, f"sent {sent}/{total}; paused")
-                        self._save_resume(idx, idx, 0)
-                        break
-
-                    # partial/error: ask how to proceed (treat like READY stage)
-                    if sent < total or error_text is not None:
-                        logs.append_event(user_name, "data partially transferred", idx, line_text, f"sent {sent}/{total}" + (f"; {error_text}" if error_text else ""))
-                        self._save_resume(idx, idx, 0)
-                        decision = self._timeout_decision(idx, "VSET", 0.0)
-                        if decision == "repeat":
-                            continue                # SAME ROW again
-                        elif decision == "continue":
-                            self._save_resume(idx, idx + 1, 0)
-                            idx += 1
-                            continue
-                        elif decision == "exit":
-                            self._save_resume(idx, idx, 0)
-                            self.paused = True
-                            break
-
-                    logs.append_event(user_name, "data transferred", idx, line_text, None)
-
-                    # WAIT READY
-                    if not self.dev.wait_ready(READY_TIMEOUT_S):
-                        self.q.put(("log", "[TIMEOUT] READY timeout"))
-                        logs.append_event(user_name, "print started", idx, line_text, "READY timeout")
-                        decision = self._timeout_decision(idx, "READY", READY_TIMEOUT_S)
-                        if decision == "repeat":
-                            self._save_resume(idx, idx, 0)
-                            continue            # SAME ROW again
-                        elif decision == "continue":
-                            self._save_resume(idx, idx + 1, 0)
-                            idx += 1
-                            continue
-                        elif decision == "exit":
-                            self._save_resume(idx, idx, 0)
-                            self.paused = True
-                            break
-
-                    # START PRINT (G)
-                    try:
-                        try:
-                            self.q.put(("log", f"[FRAME] {self._preview_extended_frame('G', '', '')}"))
-                        except Exception:
-                            pass
-                        rs = self.dev.start_print()
-                        self.q.put(("log", f"[START] {self._short(rs)}"))
-                        logs.append_event(user_name, "print started", idx, line_text, None)
-                    except Exception as e:
-                        msg = f"start_print error: {e}"
-                        self.q.put(("log", f"[ERROR] {msg}"))
-                        logs.append_event(user_name, "print started", idx, line_text, msg)
-                        decision = self._timeout_decision(idx, "G", 0.0)
-                        if decision == "repeat":
-                            self._save_resume(idx, idx, 0)
-                            continue
-                        elif decision == "continue":
-                            self._save_resume(idx, idx + 1, 0)
-                            idx += 1
-                            continue
-                        elif decision == "exit":
-                            self._save_resume(idx, idx, 0)
-                            self.paused = True
-                            break
-
-                    if getattr(self, "paused", False) or not self.running:
-                        self._save_resume(idx, idx, 0)
-                        break
-
-                    # WAIT DONE / READY
-                    if not self.dev.wait_done_or_ready(DONE_TIMEOUT_S):
-                        self.q.put(("log", "[TIMEOUT] DONE/READY timeout"))
-                        logs.append_event(user_name, "print finished", idx, line_text, "DONE/READY timeout")
-                        decision = self._timeout_decision(idx, "DONE/READY", DONE_TIMEOUT_S)
-                        if decision == "repeat":
-                            self._save_resume(idx, idx, 0)
-                            continue
-                        elif decision == "continue":
-                            self._save_resume(idx, idx + 1, 0)
-                            idx += 1
-                            continue
-                        elif decision == "exit":
-                            self._save_resume(idx, idx, 0)
-                            self.paused = True
-                            break
-                    else:
-                        logs.append_event(user_name, "print finished", idx, line_text, None)
-                        self._save_resume(idx, idx + 1, 0)
-                        idx += 1
-
-            # ---------------- V MODE: field-based ----------------
-            # ---------------- V MODE: one print per row; columns map to text fields ----------------
-            else:
-                idx = row0
-                while idx < len(self.data):
-                    if not self.running: break
-
-                    # highlight row immediately
-                    self.q.put(("hl", idx))
-
-                    if getattr(self, "paused", False):
-                        self._save_resume(idx, idx, field0 if idx == row0 else 0)
-                        break
-
-                    row = self.data[idx]
-                    line_text = ";".join("" if c is None else str(c) for c in row)
-
-                    total_fields = len(row)
-                    field_idx    = field0 if idx == row0 else 0
-
-                    # ---------- 1) SEND ALL Vnn for this row (no print here) ----------
-                    while field_idx < total_fields:
-                        if not self.running: break
-                        if getattr(self, "paused", False):
-                            self._save_resume(idx, idx, field_idx)
-                            break
-
-                        value    = "" if row[field_idx] is None else str(row[field_idx])
-                        field_no = field_idx + 1  # column → text field index (01..)
-
-                        # send Vnn = value
-                        try:
-                            self.q.put(("log", f"[FRAME] {self._preview_extended_frame('V', f'{field_no:02d}', value)}"))
-                        except Exception:
-                            pass
-                        try:
-                            resp = self.dev.set_var(field_no, value)
-                            self.q.put(("log", f"[V] var {field_no:02d} <- {value} | {self._short(resp)}"))
-                        except Exception as e:
-                            msg = f"set_var({field_no}) error: {e}"
+                            msg = f"provide_query_text({buf_no}) error: {e}"
                             self.q.put(("log", f"[ERROR] {msg}"))
-                            logs.append_event(user_name, "data partially transferred", idx, f"{line_text} [field {field_no}]", msg)
+                            logs.append_event(
+                                user_name,
+                                "data partially transferred",
+                                idx,
+                                f"{line_text} [Q field {buf_no}]",
+                                msg,
+                            )
                             self._save_resume(idx, idx, field_idx)
-                            # field-level decision (repeat same field / continue next field / exit)
+                            # field-level decision
                             decision = self._timeout_decision(idx, "VSET", 0.0)
                             if decision == "repeat":
-                                continue             # SAME FIELD again
+                                # repeat SAME FIELD (q_index already incremented; roll back)
+                                q_index -= 1
+                                continue
                             elif decision == "continue":
-                                field_idx += 1       # NEXT FIELD
+                                field_idx += 1
+                                self._save_resume(idx, idx, field_idx if field_idx < total_fields else 0)
+                                continue
+                            elif decision == "exit":
+                                self.paused = True
+                                break
+                    else:
+                        # VARIABLE TEXT: Vnn, with its own index
+                        v_index += 1
+                        buf_no = v_index
+
+                        try:
+                            self.q.put(("log", f"[FRAME] {self._preview_extended_frame('V', f'{buf_no:02d}', value)}"))
+                        except Exception:
+                            pass
+                        try:
+                            resp = self.dev.set_var(buf_no, value)
+                            self.q.put(("log", f"[V] var {buf_no:02d} <- {value} | {self._short(resp)}"))
+                        except Exception as e:
+                            msg = f"set_var({buf_no}) error: {e}"
+                            self.q.put(("log", f"[ERROR] {msg}"))
+                            logs.append_event(
+                                user_name,
+                                "data partially transferred",
+                                idx,
+                                f"{line_text} [V field {buf_no}]",
+                                msg,
+                            )
+                            self._save_resume(idx, idx, field_idx)
+                            # field-level decision
+                            decision = self._timeout_decision(idx, "VSET", 0.0)
+                            if decision == "repeat":
+                                # repeat SAME FIELD (v_index already incremented; roll back)
+                                v_index -= 1
+                                continue
+                            elif decision == "continue":
+                                field_idx += 1
                                 self._save_resume(idx, idx, field_idx if field_idx < total_fields else 0)
                                 continue
                             elif decision == "exit":
                                 self.paused = True
                                 break
 
-                        # success → next field
-                        field_idx += 1
-                        self._save_resume(idx, idx if field_idx < total_fields else idx, field_idx if field_idx < total_fields else 0)
+                    # success → next field
+                    field_idx += 1
+                    self._save_resume(
+                        idx,
+                        idx if field_idx < total_fields else idx,
+                        field_idx if field_idx < total_fields else 0,
+                    )
 
-                    # paused/stopped during V sending
-                    if getattr(self, "paused", False) or not self.running:
-                        break
+                # paused/stopped during field sending
+                if getattr(self, "paused", False) or not self.running:
+                    break
 
-                    # if we exited early (error/continue may have advanced), check completion
-                    if field_idx < total_fields:
-                        # incomplete row; resume already stored; loop handles next step
+                # if incomplete (error/continue advanced), let the loop handle resume
+                if field_idx < total_fields:
+                    continue
+
+                # all fields done for this row
+                logs.append_event(user_name, "data transferred", idx, line_text, None)
+
+                # ---------- 2) PRINT ONCE FOR THE WHOLE ROW ----------
+
+                # READY (row-level)
+                if not self.dev.wait_ready(READY_TIMEOUT_S):
+                    self.q.put(("log", "[TIMEOUT] READY timeout"))
+                    logs.append_event(user_name, "print started", idx, line_text, "READY timeout")
+                    decision = self._timeout_decision(idx, "READY", READY_TIMEOUT_S)
+                    if decision == "repeat":
+                        # repeat SAME ROW print; V/Q buffers already in device
                         continue
-
-                    logs.append_event(user_name, "data transferred", idx, line_text, None)
-
-                    # ---------- 2) PRINT ONCE for the WHOLE ROW ----------
-                    # READY (row-level semantics)
-                    if not self.dev.wait_ready(READY_TIMEOUT_S):
-                        self.q.put(("log", "[TIMEOUT] READY timeout"))
-                        logs.append_event(user_name, "print started", idx, line_text, "READY timeout")
-                        decision = self._timeout_decision(idx, "READY", READY_TIMEOUT_S)
-                        if decision == "repeat":
-                            # repeat SAME ROW print; V variables are already in the device → just retry print
-                            # (do NOT re-send Vs; do NOT advance idx)
-                            continue
-                        elif decision == "continue":
-                            # skip this row’s print; go to next row
-                            self._save_resume(idx, idx + 1, 0)
-                            idx += 1
-                            field0 = 0
-                            continue
-                        elif decision == "exit":
-                            self._save_resume(idx, idx, 0)
-                            self.paused = True
-                            break
-
-                    # START PRINT (G)
-                    try:
-                        try:
-                            self.q.put(("log", f"[FRAME] {self._preview_extended_frame('G', '', '')}"))
-                        except Exception:
-                            pass
-                        rs = self.dev.start_print()
-                        self.q.put(("log", f"[START] {self._short(rs)}"))
-                        logs.append_event(user_name, "print started", idx, line_text, None)
-                    except Exception as e:
-                        msg = f"start_print error: {e}"
-                        self.q.put(("log", f"[ERROR] {msg}"))
-                        logs.append_event(user_name, "print started", idx, line_text, msg)
-                        # ask row-level decision
-                        decision = self._timeout_decision(idx, "G", 0.0)
-                        if decision == "repeat":
-                            continue        # retry SAME ROW print
-                        elif decision == "continue":
-                            self._save_resume(idx, idx + 1, 0)
-                            idx += 1; field0 = 0
-                            continue
-                        elif decision == "exit":
-                            self._save_resume(idx, idx, 0)
-                            self.paused = True
-                            break
-
-                    if getattr(self, "paused", False) or not self.running:
-                        self._save_resume(idx, idx, 0)
-                        break
-
-                    # DONE/READY (row-level semantics)
-                    if not self.dev.wait_done_or_ready(DONE_TIMEOUT_S):
-                        self.q.put(("log", "[TIMEOUT] DONE/READY timeout"))
-                        logs.append_event(user_name, "print finished", idx, line_text, "DONE/READY timeout")
-                        decision = self._timeout_decision(idx, "DONE/READY", DONE_TIMEOUT_S)
-                        if decision == "repeat":
-                            # retry SAME ROW print
-                            continue
-                        elif decision == "continue":
-                            self._save_resume(idx, idx + 1, 0)
-                            idx += 1; field0 = 0
-                            continue
-                        elif decision == "exit":
-                            self._save_resume(idx, idx, 0)
-                            self.paused = True
-                            break
-                    else:
-                        logs.append_event(user_name, "print finished", idx, line_text, None)
-                        # row complete → next row
+                    elif decision == "continue":
                         self._save_resume(idx, idx + 1, 0)
                         idx += 1
                         field0 = 0
+                        continue
+                    elif decision == "exit":
+                        self._save_resume(idx, idx, 0)
+                        self.paused = True
+                        break
 
-                # finished this row (all fields), advance to next row
-                if not getattr(self, "paused", False) and self.running:
-                    if field_idx >= total_fields:
+                # START PRINT (G)
+                try:
+                    try:
+                        self.q.put(("log", f"[FRAME] {self._preview_extended_frame('G', '', '')}"))
+                    except Exception:
+                        pass
+                    rs = self.dev.start_print()
+                    self.q.put(("log", f"[START] {self._short(rs)}"))
+                    logs.append_event(user_name, "print started", idx, line_text, None)
+                except Exception as e:
+                    msg = f"start_print error: {e}"
+                    self.q.put(("log", f"[ERROR] {msg}"))
+                    logs.append_event(user_name, "print started", idx, line_text, msg)
+                    decision = self._timeout_decision(idx, "G", 0.0)
+                    if decision == "repeat":
+                        # retry SAME ROW print (V/Q content is already there)
+                        continue
+                    elif decision == "continue":
+                        self._save_resume(idx, idx + 1, 0)
                         idx += 1
                         field0 = 0
+                        continue
+                    elif decision == "exit":
+                        self._save_resume(idx, idx, 0)
+                        self.paused = True
+                        break
 
-            # normal end
+                if getattr(self, "paused", False) or not self.running:
+                    self._save_resume(idx, idx, 0)
+                    break
+
+                # DONE/READY (row-level)
+                if not self.dev.wait_done_or_ready(DONE_TIMEOUT_S):
+                    self.q.put(("log", "[TIMEOUT] DONE/READY timeout"))
+                    logs.append_event(user_name, "print finished", idx, line_text, "DONE/READY timeout")
+                    decision = self._timeout_decision(idx, "DONE/READY", DONE_TIMEOUT_S)
+                    if decision == "repeat":
+                        # retry SAME ROW print
+                        continue
+                    elif decision == "continue":
+                        self._save_resume(idx, idx + 1, 0)
+                        idx += 1
+                        field0 = 0
+                        continue
+                    elif decision == "exit":
+                        self._save_resume(idx, idx, 0)
+                        self.paused = True
+                        break
+                else:
+                    logs.append_event(user_name, "print finished", idx, line_text, None)
+                    # row complete → next row
+                    self._save_resume(idx, idx + 1, 0)
+                    idx += 1
+                    field0 = 0
+
         except Exception as e:
             self.q.put(("log", f"[ERROR] {e}"))
         finally:
@@ -2718,11 +3001,116 @@ class App(tk.Tk):
         header, rows, used_delim = self._parse_csv_text(text)
         self.header = header
         self.data = rows
+
+        # New CSV loaded → reset runtime custom cache
+        self.custom_column_modes = None
+        self.column_modes = []
+
+        ncols = len(self.header) if self.header else (len(self.data[0]) if self.data else 0)
+
+        # Global data_send_mode
+        try:
+            mode = str(self.cfg.get("data_send_mode", "Q")).strip().upper()
+        except Exception:
+            mode = "Q"
+        if mode not in ("V", "Q", "CUSTOM"):
+            mode = "Q"
+
+        # Check if we have a saved mapping for THIS header
+        saved_hdr   = self.cfg.get("column_modes_header") or []
+        saved_modes = self.cfg.get("column_modes") or []
+        have_saved = (
+            saved_hdr
+            and saved_modes
+            and ncols == len(saved_hdr) == len(saved_modes)
+            and all((h1 or "") == (h2 or "") for h1, h2 in zip(saved_hdr, self.header or saved_hdr))
+        )
+
+        if ncols > 0:
+            if mode == "CUSTOM":
+                if have_saved:
+                    # reuse previously saved mapping for this header
+                    self.column_modes = [
+                        ("Q" if (m or "").upper() == "Q" else "V") for m in saved_modes
+                    ]
+                    self.custom_column_modes = list(self.column_modes)
+                    self._log("[COLUMNS] Reused saved CUSTOM column modes from config.")
+                else:
+                    # first time for this CSV → ask and persist
+                    try:
+                        self._ask_column_modes()
+                    except Exception as e:
+                        self._log(f"[COLUMNS] Could not open column mode dialog: {e}")
+                        default_mode = "Q"
+                        self.column_modes = [default_mode] * ncols
+            else:
+                # simple global mode (V or Q)
+                default_mode = "Q" if mode == "Q" else "V"
+                self.column_modes = [default_mode] * ncols
+
+        # build table with [V]/[Q] headers
         self._rebuild_table()
         self._log(f"[CSV] Loaded {len(self.data)} rows (delimiter='{used_delim}')")
-        # after CSV load succeeds
-        logs.append_event(getattr(self.user,"username",""), "data stream loaded",
-                  -1, f"CSV loaded: {self.cfg.get('last_csv','')}", None)
+
+        # Persist whatever modes we ended up with for this CSV
+        try:
+            self.cfg["column_modes_header"] = list(self.header or [])
+            self.cfg["column_modes"] = list(self.column_modes or [])
+            cs.save_config(self.cfg)
+        except Exception as e:
+            self._log(f"[COLUMNS] Could not persist column modes after CSV load: {e}")
+
+        # audit log
+        logs.append_event(
+            getattr(self.user, "username", ""),
+            "data stream loaded",
+            -1,
+            f"CSV loaded: {self.cfg.get('last_csv', '')}",
+            None,
+        )
+
+    def _ask_column_modes(self):
+        """
+        Ask the user per-column whether to send as V or Q for the CURRENT CSV.
+        Stores result in:
+          - self.column_modes           -> effective modes used by the worker
+          - self.custom_column_modes    -> remembered CUSTOM setup for this CSV
+        """
+        headers = self.header or []
+        if not headers:
+            n = len(self.data[0]) if self.data else 0
+            headers = [f"Col {i+1}" for i in range(n)]
+
+        try:
+            mode = str(self.cfg.get("data_send_mode", "Q")).strip().upper()
+        except Exception:
+            mode = "Q"
+
+        default_mode = "Q" if mode == "Q" else "V"
+
+        result = {"modes": None}
+
+        def _on_ok(modes):
+            result["modes"] = modes
+
+        dlg = ColumnModeDialog(self, headers, default_mode, _on_ok)
+        self.wait_window(dlg)
+
+        modes = result["modes"]
+        if not modes:
+            # user cancelled → fall back to all-default
+            n = len(headers)
+            modes = [default_mode] * n
+
+        normalized = [("Q" if (m or "").upper() == "Q" else "V") for m in modes]
+        self.column_modes = normalized
+        # remember CUSTOM setup for this CSV
+        self.custom_column_modes = list(normalized)
+
+        self._log("[COLUMNS] Modes set: " + ", ".join(
+            f"{h}={m}" for h, m in zip(headers, self.column_modes)
+        ))
+
 
     def _mark_timeout_row(self, idx: int):
         """Highlight timed-out/stopped row in a distinct color."""
@@ -2746,10 +3134,11 @@ class App(tk.Tk):
             self._log(f"[TIMEOUT] Row {idx+1}: user chose {decision.upper()}")
         TimeoutDialog(self, idx, stage, seconds, _chosen)
     def _open_logs(self):
-        if not (self.user and self.user.role == "admin"):
-            messagebox.showerror("Restricted", "Only admin can open Logs.")
+        if not self.user:
+            messagebox.showerror("Restricted", "Must be logged in to open the logs")
             return
-        LogViewer(self)
+        can_clear = bool(self.user and self.user.role == "admin") or False
+        LogViewer(self, can_clear=can_clear)
 
     def _audit(self, state: str, detail: str = "", row: int = -1, error: str | None = None):
         try:

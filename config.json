@@ -10,11 +10,31 @@
   "pattern": "test",
   "resume": {
     "path": "C:/Users/Logisztika/Documents/bigtest.log.csv",
-    "highlight": 18,
-    "next": 18,
+    "highlight": 7,
+    "next": 7,
     "pending": true,
     "field": 0
   },
   "connection_mode": "test",
-  "data_send_mode": "Q"
+  "data_send_mode": "CUSTOM",
+  "column_modes_header": [
+    "counter",
+    " query",
+    " direct data",
+    " pattern",
+    " timestamp",
+    " year",
+    " status",
+    " error message"
+  ],
+  "column_modes": [
+    "Q",
+    "V",
+    "V",
+    "V",
+    "V",
+    "Q",
+    "V",
+    "V"
+  ]
 }
