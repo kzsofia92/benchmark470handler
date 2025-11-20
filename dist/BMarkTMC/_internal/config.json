@@ -10,8 +10,8 @@
   "pattern": "TEST",
   "resume": {
     "path": "C:/Users/Logisztika/Documents/bigtest.log.csv",
-    "highlight": 8,
-    "next": 8,
+    "highlight": 9,
+    "next": 9,
     "pending": true,
     "field": 0
   },
@@ -42,5 +42,5 @@
     "port": 10000
   },
   "io_mode": "serial",
-  "pattern_active": "hbgfhfh"
+  "pattern_active": "TEST"
 }

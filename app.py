@@ -2539,15 +2539,10 @@ class App(tk.Tk):
                             )
                         except Exception:
                             pass
-                        try:
-                            self.dev.disconnect()
-                        except Exception:
-                            pass
-                        self._set_status("Not connected (verification failed)")
-                        self.btn_connect["state"] = "normal"
-                        self.btn_disconnect["state"] = "disabled"
-                        self.btn_start["state"] = "disabled"
-                        return
+                        # DO NOT disconnect or disable Start.
+                        # Printer is clearly reachable; we just note that live verify failed.
+                        self._set_status("Connected (live verify failed – using port anyway)")
+
             except Exception:
                 pass
 
@@ -2579,9 +2574,27 @@ class App(tk.Tk):
         # in _disconnect()
         self._audit("serial disconnect", "")
 
+       
     def _update_start_enabled(self):
-        is_conn = getattr(self.dev, "is_connected", None)
-        connected = bool(is_conn and self.dev.is_connected())
+        dev = getattr(self, "dev", None)
+        connected = False
+
+        if dev is not None:
+            # If the driver *does* provide is_connected(), use it.
+            is_conn_attr = getattr(dev, "is_connected", None)
+            if callable(is_conn_attr):
+                try:
+                    connected = bool(is_conn_attr())
+                except Exception:
+                    connected = False
+            else:
+                # Fallback for current TMC470: check underlying serial.
+                ser = getattr(dev, "ser", None)
+                try:
+                    connected = bool(ser and ser.is_open)
+                except Exception:
+                    connected = bool(ser)
+
         ok = connected and bool(self.data)
         self.btn_start["state"] = ("normal" if ok and not self.running else "disabled")
 

@@ -1964,3 +1964,18 @@ timestamp;user;state;row;line_content;error
 2025.11.20 08:26:58;admin;print paused;0;operator requested stop;
 2025.11.20 08:27:00;admin;screen;0;[VERIFY] None;
 2025.11.20 08:27:00;admin;screen;0;[PAUSE] Batch paused, use Start to resume.;
+2025.11.20 10:33:36;admin;login;0;user logged in;
+2025.11.20 10:33:36;admin;screen;0;[COLUMNS] Reused saved CUSTOM column modes from config.;
+2025.11.20 10:33:36;admin;screen;0;"[CSV] Loaded 111 rows (delimiter=';')";
+2025.11.20 10:33:36;admin;data stream loaded;0;CSV loaded: C:/Users/Logisztika/Documents/bigtest.log.csv;
+2025.11.20 10:33:36;admin;screen;0;[RESUME] Highlight row 9, next to send: row 9, field 1;
+2025.11.20 10:33:38;admin;serial connect;0;"port=COM1; baud=9600; parity=N; stopbits=1; bytesize=8";
+2025.11.20 10:33:38;admin;serial connected;0;COM1@9600 parity=N stopbits=1 bytesize=8;
+2025.11.20 10:33:38;admin;batch start;0;pattern=TEST;
+2025.11.20 10:33:38;admin;print started;0;rows=111 pattern=TEST;
+2025.11.20 10:33:38;admin;screen;0;[START] Starting at row 9, field 1;
+2025.11.20 10:33:38;admin;screen;0;[FRAME] <SOH>O<STX><ETX>079<CR>;
+2025.11.20 10:33:39;admin;serial disconnected;0;;
+2025.11.20 10:33:39;admin;serial disconnect;0;;
+2025.11.20 10:33:39;admin;screen;0;[ERROR] ClearCommError failed (OSError(9, 'A leíró érvénytelen.', None, 6));[ERROR] ClearCommError failed (OSError(9, 'A leíró érvénytelen.', None, 6))
+2025.11.20 10:33:39;admin;screen;0;[DONE] Batch complete;
