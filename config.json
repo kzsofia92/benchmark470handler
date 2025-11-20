@@ -7,11 +7,11 @@
     "databits": 8
   },
   "last_csv": "C:/Users/Logisztika/Documents/bigtest.log.csv",
-  "pattern": "test",
+  "pattern": "TEST",
   "resume": {
     "path": "C:/Users/Logisztika/Documents/bigtest.log.csv",
-    "highlight": 7,
-    "next": 7,
+    "highlight": 8,
+    "next": 8,
     "pending": true,
     "field": 0
   },
@@ -36,5 +36,11 @@
     "Q",
     "V",
     "V"
-  ]
+  ],
+  "ethernet": {
+    "host": "192.168.10.22",
+    "port": 10000
+  },
+  "io_mode": "serial",
+  "pattern_active": "TEST"
 }

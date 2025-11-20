@@ -10,6 +10,7 @@ from typing import Optional, Tuple, List
 
 import serial
 import serial.tools.list_ports
+import socket
 
 # ------------------ Control chars ------------------
 SOH = b'\x01'
@@ -199,6 +200,7 @@ def _translate_status(resp: str) -> str:
 @dataclass
 class TMC470:
     ser: Optional[serial.Serial] = None
+    sock: Optional[socket.socket] = None
     _lock: threading.Lock = threading.Lock()
 
     # ------------- lifecycle -------------
@@ -221,50 +223,136 @@ class TMC470:
                 self.ser.close()
             finally:
                 self.ser = None
+        if self.sock:
+            try:
+                self.sock.close()
+            finally:
+                self.sock = None
+
+
+    def is_connected(self) -> bool:
+        """True if either serial or TCP socket is connected."""
+        if self.ser and getattr(self.ser, "is_open", False):
+            return True
+        if self.sock is not None:
+            try:
+                self.sock.getpeername()
+                return True
+            except OSError:
+                return False
+        return False
+
+    def connect_tcp(self, host: str, port: int, timeout: float = 1.0) -> None:
+        """
+        Connect to TMC470 via TCP (Ethernet).
+        """
+        # if already connected, do nothing
+        if self.sock is not None:
+            try:
+                self.sock.getpeername()
+                return
+            except OSError:
+                self.sock = None
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect((host, port))
+        # for read loops we use short timeouts
+        s.settimeout(0.05)
+        self.sock = s
 
     # ------------- low-level I/O -------------
     def _clear_input(self) -> None:
-        if not self.ser:
+        # Serial
+        if self.ser and getattr(self.ser, "in_waiting", None) is not None:
+            try:
+                while self.ser.in_waiting:
+                    self.ser.read(self.ser.in_waiting or 1)
+            except Exception:
+                pass
             return
-        try:
-            while self.ser.in_waiting:
-                self.ser.read(self.ser.in_waiting or 1)
-        except Exception:
-            pass
+
+        # TCP socket – best effort, non-blocking drain
+        if self.sock:
+            try:
+                self.sock.settimeout(0.0)
+                while True:
+                    try:
+                        chunk = self.sock.recv(4096)
+                        if not chunk:
+                            break
+                    except BlockingIOError:
+                        break
+            except Exception:
+                pass
+            finally:
+                try:
+                    self.sock.settimeout(0.05)
+                except Exception:
+                    pass
+
 
     def _send(self, frame: bytes) -> None:
-        if not self.ser or not self.ser.is_open:
-            raise RuntimeError("Serial not connected")
+        if not self.is_connected():
+            raise RuntimeError("Device not connected")
         with self._lock:
             self._clear_input()
-            self.ser.reset_output_buffer()
-            self.ser.write(frame)
-            self.ser.flush()
+            if self.ser and getattr(self.ser, "is_open", False):
+                self.ser.reset_output_buffer()
+                self.ser.write(frame)
+                self.ser.flush()
+            elif self.sock:
+                self.sock.sendall(frame)
+
 
     def _read_until_cr(self, timeout_ms: int = 3000) -> Optional[str]:
         """
         Read ASCII until CR, or timeout.
+        Works for both serial and TCP.
         """
-        if not self.ser or not self.ser.is_open:
+        if not self.is_connected():
             return None
+
         end = time.time() + (timeout_ms / 1000.0)
         buf = bytearray()
+
         while time.time() < end:
-            n = self.ser.in_waiting
-            if n:
-                chunk = self.ser.read(n)
-                buf.extend(chunk)
-                if buf.endswith(CR):
-                    break
-            else:
+            if self.ser and getattr(self.ser, "is_open", False):
+                n = self.ser.in_waiting
+                if n:
+                    chunk = self.ser.read(n)
+                    buf.extend(chunk)
+                    if buf.endswith(CR):
+                        break
+                else:
+                    time.sleep(0.01)
+            elif self.sock:
+                try:
+                    chunk = self.sock.recv(4096)
+                    if chunk:
+                        buf.extend(chunk)
+                        if buf.endswith(CR):
+                            break
+                    else:
+                        # peer closed
+                        break
+                except socket.timeout:
+                    # no data yet, keep waiting until timeout
+                    pass
+                except BlockingIOError:
+                    pass
                 time.sleep(0.01)
+            else:
+                break
+
         if not buf:
             return None
-        # Normalize to ASCII string
+
         try:
             return buf.decode("ascii", errors="ignore")
         except Exception:
             return "".join(chr(b) for b in buf if 32 <= b < 127)
+
 
     def _txrx(self, op_key: str, field: str = "", data: str = "", timeout_ms: int = 3000) -> Optional[str]:
         """

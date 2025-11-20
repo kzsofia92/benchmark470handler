@@ -260,135 +260,237 @@ class Login(tk.Toplevel):
 class SettingsDialog(tk.Toplevel):
     def __init__(self, master, cfg: dict, on_save):
         super().__init__(master)
-        self.withdraw()
         self.title("Settings ⚙️")
         self.resizable(False, False)
         self.on_save = on_save
         self.cfg = cfg
         self.transient(master)
-        # center(self)
+        center(self)  # keep your existing centering
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
         s = cfg["serial"]
+        eth = cfg.get("ethernet", {})
+        io_mode = (cfg.get("io_mode", "serial") or "serial").lower()
+        if io_mode not in ("serial", "ethernet"):
+            io_mode = "serial"
 
         frm = ttk.Frame(self, padding=12)
         frm.pack(fill="both", expand=True)
+        # 0: radio, 1: label, 2: input
         frm.columnconfigure(0, weight=0)
-        frm.columnconfigure(1, weight=1)
+        frm.columnconfigure(1, weight=0)
+        frm.columnconfigure(2, weight=1)
 
-        # Row 0 — Port
-        ttk.Label(frm, text="Port").grid(row=0, column=0, sticky="e", pady=4, padx=4)
+        # ---------------- IO MODE RADIO STATE ----------------
+        self.io_mode_var = tk.StringVar(value=io_mode)
+
+        # ---------------- SERIAL SECTION ----------------
+        # Row 0 – Serial radio + Port
+        self.rb_serial = ttk.Radiobutton(
+            frm,
+            text="Serial",
+            variable=self.io_mode_var,
+            value="serial",
+            command=self._apply_io_mode,
+        )
+        self.rb_serial.grid(row=0, column=0, sticky="w", pady=4, padx=(0, 4))
+
+        ttk.Label(frm, text="Port").grid(row=0, column=1, sticky="e", pady=4, padx=4)
         ports = TMC470.list_ports()
         self.cb_port = ttk.Combobox(frm, width=22, values=ports, state="readonly")
         self.cb_port.set(s.get("port", "") or (ports[0] if ports else ""))
-        self.cb_port.grid(row=0, column=1, sticky="we")
+        self.cb_port.grid(row=0, column=2, sticky="we")
 
-        # Row 1 — Baud
-        ttk.Label(frm, text="Baud").grid(row=1, column=0, sticky="e", pady=4, padx=4)
+        # Row 1 – Baud
+        ttk.Label(frm, text="Baud").grid(row=1, column=1, sticky="e", pady=4, padx=4)
         self.ent_baud = ttk.Entry(frm, width=24)
         self.ent_baud.insert(0, str(s.get("baud", SERIAL_DEFAULTS["baudrate"])))
-        self.ent_baud.grid(row=1, column=1, sticky="we")
+        self.ent_baud.grid(row=1, column=2, sticky="we")
 
-        # Row 2 — Parity
-        ttk.Label(frm, text="Parity").grid(row=2, column=0, sticky="e", pady=4, padx=4)
-        self.cb_parity = ttk.Combobox(frm, width=22, values=list(PARITY_MAP.keys()), state="readonly")
+        # Row 2 – Parity
+        ttk.Label(frm, text="Parity").grid(row=2, column=1, sticky="e", pady=4, padx=4)
+        self.cb_parity = ttk.Combobox(
+            frm, width=22, values=list(PARITY_MAP.keys()), state="readonly"
+        )
         self.cb_parity.set(s.get("parity", "N"))
-        self.cb_parity.grid(row=2, column=1, sticky="we")
+        self.cb_parity.grid(row=2, column=2, sticky="we")
 
-        # Row 3 — Stop bits (1/2)
-        ttk.Label(frm, text="Stop bits").grid(row=3, column=0, sticky="e", pady=4, padx=4)
-        self.cb_stop = ttk.Combobox(frm, width=22, values=[str(x) for x in STOPBITS_CHOICES], state="readonly")
+        # Row 3 – Stop bits
+        ttk.Label(frm, text="Stop bits").grid(row=3, column=1, sticky="e", pady=4, padx=4)
+        self.cb_stop = ttk.Combobox(
+            frm, width=22, values=[str(x) for x in STOPBITS_CHOICES], state="readonly"
+        )
         self.cb_stop.set(str(s.get("stopbits", 1)))
-        self.cb_stop.grid(row=3, column=1, sticky="we")
+        self.cb_stop.grid(row=3, column=2, sticky="we")
 
-        # Row 4 — Data bits (7/8)  **FIXED: correct choices**
-        ttk.Label(frm, text="Data bits").grid(row=4, column=0, sticky="e", pady=4, padx=4)
-        self.cb_data = ttk.Combobox(frm, width=22, values=[str(x) for x in DATABITS_CHOICES], state="readonly")
+        # Row 4 – Data bits
+        ttk.Label(frm, text="Data bits").grid(row=4, column=1, sticky="e", pady=4, padx=4)
+        self.cb_data = ttk.Combobox(
+            frm, width=22, values=[str(x) for x in DATABITS_CHOICES], state="readonly"
+        )
         self.cb_data.set(str(s.get("databits", 8)))
-        self.cb_data.grid(row=4, column=1, sticky="we")
+        self.cb_data.grid(row=4, column=2, sticky="we")
 
-        # Row 5 — Default pattern
-        ttk.Label(frm, text="Default pattern").grid(row=5, column=0, sticky="e", pady=4, padx=4)
+        # ---------------- ETHERNET SECTION ----------------
+        # Row 5 – Ethernet radio + IP
+        self.rb_ethernet = ttk.Radiobutton(
+            frm,
+            text="Ethernet",
+            variable=self.io_mode_var,
+            value="ethernet",
+            command=self._apply_io_mode,
+        )
+        self.rb_ethernet.grid(row=5, column=0, sticky="w", pady=4, padx=(0, 4))
+
+        ttk.Label(frm, text="IP address").grid(row=5, column=1, sticky="e", pady=4, padx=4)
+
+        vcmd_ip = self.register(self._vc_ip)
+        self.ent_ip = ttk.Entry(
+            frm,
+            width=24,
+            validate="key",
+            validatecommand=(vcmd_ip, "%P"),
+        )
+        self.ent_ip.insert(0, eth.get("host", ""))
+        self.ent_ip.grid(row=5, column=2, sticky="we")
+        # Auto insert dots after 3 digits in a block
+        self.ent_ip.bind("<KeyRelease>", self._on_ip_key)
+
+        # Row 6 – Ethernet port
+        ttk.Label(frm, text="TCP port").grid(row=6, column=1, sticky="e", pady=4, padx=4)
+        self.ent_eport = ttk.Entry(frm, width=24)
+        self.ent_eport.insert(0, str(eth.get("port", 10000)))
+        self.ent_eport.grid(row=6, column=2, sticky="we")
+
+        # ---------------- COMMON SECTION ----------------
+        # Row 7 – Default pattern
+        ttk.Label(frm, text="Default pattern").grid(row=7, column=1, sticky="e", pady=4, padx=4)
         self.ent_pattern = ttk.Entry(frm, width=24)
         self.ent_pattern.insert(0, cfg.get("pattern", ""))
-        self.ent_pattern.grid(row=5, column=1, sticky="we")
+        self.ent_pattern.grid(row=7, column=2, sticky="we")
 
-        # Row 6 — Connection mode
-        ttk.Label(frm, text="Connection mode").grid(row=6, column=0, sticky="e", pady=4, padx=4)
+        # Row 8 – Connection mode
+        ttk.Label(frm, text="Connection mode").grid(row=8, column=1, sticky="e", pady=4, padx=4)
         self.cb_mode = ttk.Combobox(frm, width=22, state="readonly", values=["test", "live"])
         self.cb_mode.set(cfg.get("connection_mode", "test"))
-        self.cb_mode.grid(row=6, column=1, sticky="we")
+        self.cb_mode.grid(row=8, column=2, sticky="we")
 
-        # Row 7 — Data send mode (V / Q / CUSTOM)
-               # Row 7 — Data mode (+ column-level editor)
-        ttk.Label(frm, text="Data mode").grid(
-            row=7, column=0, sticky="e", pady=4, padx=4
-        )
-
-        row7 = ttk.Frame(frm)
-        row7.grid(row=7, column=1, sticky="we")
-        row7.columnconfigure(0, weight=1)
-
-        # allow V / Q / CUSTOM
+        # Row 9 – Data send mode
+        ttk.Label(frm, text="Data send mode").grid(row=9, column=1, sticky="e", pady=4, padx=4)
         self.cb_data_mode = ttk.Combobox(
-            row7,
-            width=10,
-            state="readonly",
-            values=["V", "Q", "CUSTOM"],
+            frm, width=22, state="readonly", values=["V", "Q", "CUSTOM"]
         )
         self.cb_data_mode.set(cfg.get("data_send_mode", "Q"))
-        self.cb_data_mode.grid(row=0, column=0, sticky="we")
+        self.cb_data_mode.grid(row=9, column=2, sticky="we")
 
-        # "..." button – opens column mode dialog in the main window
-        def _edit_columns():
-            master = self.master
-            # only do something if App actually has _ask_column_modes
-            fn = getattr(master, "_ask_column_modes", None)
-            if callable(fn):
-                fn()
-            else:
-                messagebox.showinfo(
-                    "Column modes",
-                    "Column mode editor is not available in this build."
-                )
-
-        btn_cols = ttk.Button(row7, text="...", width=3, command=_edit_columns)
-        btn_cols.grid(row=0, column=1, padx=(4, 0))
-
-        #(V = Variable, Q = Query CUSTOM = user defines for each column)
-        ttk.Label(frm, text="V = Variable, Q = Query CUSTOM = user defines for each column").grid(row=8, column=0,  columnspan=2, sticky="ew", pady=4, padx=4)
-
-
-        # Row 9 — Buttons
+        # Row 10 – Buttons
         btns = ttk.Frame(frm)
-        btns.grid(row=9, column=0, columnspan=2, pady=10)
+        btns.grid(row=10, column=0, columnspan=3, pady=10)
         ttk.Button(btns, text="Save", command=self._save).pack(side="left", padx=6)
         ttk.Button(btns, text="Cancel", command=self._close).pack(side="left", padx=6)
 
-               # ----- final: center like login, then show -----
-        self.update_idletasks()
-        try:
-            center(self)
-        except Exception:
-            pass
-        self.deiconify()
-        self.lift()
-        self.attributes("-topmost", True)
-        self.after(0, lambda: self.attributes("-topmost", False))
-        self.grab_set()
+        # Apply initial mode (enables/disables fields)
+        self._apply_io_mode()
 
+    # ---------- IO MODE HANDLER ----------
+    def _apply_io_mode(self):
+        mode = (self.io_mode_var.get() or "serial").lower()
 
+        if mode == "ethernet":
+            # disable serial fields
+            self.cb_port.configure(state="disabled")
+            self.ent_baud.configure(state="disabled")
+            self.cb_parity.configure(state="disabled")
+            self.cb_stop.configure(state="disabled")
+            self.cb_data.configure(state="disabled")
+
+            # enable ethernet fields
+            self.ent_ip.configure(state="normal")
+            self.ent_eport.configure(state="normal")
+        else:
+            # serial
+            self.cb_port.configure(state="readonly")
+            self.ent_baud.configure(state="normal")
+            self.cb_parity.configure(state="readonly")
+            self.cb_stop.configure(state="readonly")
+            self.cb_data.configure(state="readonly")
+
+            # disable ethernet fields
+            self.ent_ip.configure(state="disabled")
+            self.ent_eport.configure(state="disabled")
+
+    # ---------- IP VALIDATOR ----------
+    def _vc_ip(self, new_value: str) -> bool:
+        """
+        Allow only digits and dots.
+        Max 4 blocks, each 0–3 digits.
+        """
+        s = new_value
+        if s == "":
+            return True
+
+        # Only digits and dots
+        for ch in s:
+            if not (ch.isdigit() or ch == "."):
+                return False
+
+        parts = s.split(".")
+        if len(parts) > 4:
+            return False
+
+        for part in parts:
+            if len(part) > 3:
+                return False
+            if part and not part.isdigit():
+                return False
+
+        return True
+
+    def _on_ip_key(self, event):
+        """
+        Auto insert '.' after 3 digits in a block, up to 3 dots.
+        """
+        # ignore navigation / deletion keys
+        if event.keysym in ("BackSpace", "Delete", "Left", "Right", "Home", "End"):
+            return
+        if not event.char or not event.char.isdigit():
+            return
+
+        s = self.ent_ip.get()
+        if not s:
+            return
+
+        parts = s.split(".")
+        # if last block has length 3 and we still have less than 4 blocks, append '.'
+        if len(parts) < 4 and len(parts[-1]) == 3 and not s.endswith("."):
+            # avoid messing when field is disabled
+            if str(self.ent_ip["state"]) == "normal":
+                self.ent_ip.insert("end", ".")
+
+    # ---------- SAVE / CLOSE ----------
     def _save(self):
+        # Serial section
         s = self.cfg["serial"]
         s["port"] = self.cb_port.get().strip()
         s["baud"] = int(self.ent_baud.get().strip() or "9600")
         s["parity"] = self.cb_parity.get().strip()
         s["stopbits"] = int(self.cb_stop.get().strip() or "1")
         s["databits"] = int(self.cb_data.get().strip() or "8")
+
+        # Ethernet section
+        e = self.cfg.setdefault("ethernet", {})
+        e["host"] = self.ent_ip.get().strip()
+        try:
+            e["port"] = int(self.ent_eport.get().strip() or "10000")
+        except ValueError:
+            e["port"] = 10000
+
+        # Common
         self.cfg["pattern"] = self.ent_pattern.get().strip()
         self.cfg["connection_mode"] = self.cb_mode.get().strip()
         self.cfg["data_send_mode"] = self.cb_data_mode.get().strip()
+        self.cfg["io_mode"] = (self.io_mode_var.get() or "serial").lower()
 
         self.on_save(self.cfg)
         self._close()
@@ -397,7 +499,6 @@ class SettingsDialog(tk.Toplevel):
         self.grab_release()
         self.destroy()
 
-    
 
 #----------TIMEOUT DECISION DIALOG----------
 class TimeoutDialog(tk.Toplevel):
@@ -1962,10 +2063,14 @@ class App(tk.Tk):
 
         ttk.Label(top, text="Pattern:").pack(side="left", padx=(12, 4))
         self.ent_pattern = ttk.Entry(top, width=24)
-        self.ent_pattern.insert(0, self.cfg.get("pattern", ""))
-        self.ent_pattern.pack(side="left")
-        self._pattern_last = self.ent_pattern.get().strip()
+        pat_active = (self.cfg.get("pattern_active") or "").strip()
+        pat_default = (self.cfg.get("pattern") or "").strip()
+        pat_initial = pat_active if pat_active else pat_default
+        if pat_initial:
+            self.ent_pattern.insert(0, pat_initial)
 
+        self.ent_pattern.pack(side="left")
+        self._pattern_last = pat_initial
         # click opens the same dropdown menus under each label
         def _popup_under(widget, menu):
             x = widget.winfo_rootx()
@@ -1995,8 +2100,14 @@ class App(tk.Tk):
         def _pattern_changed(_evt=None):
             new = self.ent_pattern.get().strip()
             if new != self._pattern_last:
-                # self._audit("pattern changed", f"old={self._pattern_last}; new={new}")
+                # Update active pattern in config (do NOT touch default pattern here)
+                self.cfg["pattern_active"] = new
+                try:
+                    cs.save_config(self.cfg)
+                except Exception:
+                    pass
                 self._pattern_last = new
+
 
         self.ent_pattern.bind("<FocusOut>", _pattern_changed)
         self.ent_pattern.bind("<Return>",   _pattern_changed)
@@ -2165,10 +2276,8 @@ class App(tk.Tk):
             cs.save_config(cfg)
             self.cfg = cfg
             self._log("[SETTINGS] Serial saved")
-            # refresh last pattern tracker too
-            self._pattern_last = self.cfg.get("pattern","") or self._pattern_last
 
-            # NEW: re-apply data_send_mode immediately to current CSV / columns
+            # Only data_send_mode is re-applied; default pattern stays separate
             try:
                 self._apply_data_send_mode(prev_cfg=old)
             except Exception as e:
@@ -2301,69 +2410,131 @@ class App(tk.Tk):
 
 
 
-    # ---------- SERIAL ----------
+        # ---------- SERIAL ----------
     def _connect(self):
-        serial_config = self.cfg["serial"]
-        port = serial_config.get("port","")
-        if not port:
-            messagebox.showerror("Serial", "Admin must set Port in Settings first.")
-            return
-        kwargs = {
-            "baudrate": int(serial_config.get("baud", 9600)),
-            "parity":   {"N": "N", "E": "E", "O": "O"}[serial_config.get("parity","N")],
-            "stopbits": int(serial_config.get("stopbits", 1)),
-            "bytesize": int(serial_config.get("databits", 8)),
+        io_mode = (self.cfg.get("io_mode", "serial") or "serial").lower()
 
-        }
-        from serial import (
-            PARITY_NONE, PARITY_EVEN, PARITY_ODD,
-            STOPBITS_ONE, STOPBITS_TWO,
-            SEVENBITS, EIGHTBITS,
-        )
+        if io_mode == "ethernet":
+            eth = self.cfg.get("ethernet", {})
+            host = (eth.get("host") or "").strip()
+            try:
+                port = int(eth.get("port", 10000))
+            except ValueError:
+                port = 10000
 
-        kwargs = {
-            "baudrate": int(serial_config.get("baud", 9600)),
-            "parity":   {"N": PARITY_NONE, "E": PARITY_EVEN, "O": PARITY_ODD}[serial_config.get("parity","N")],
-            "stopbits": {1: STOPBITS_ONE, 2: STOPBITS_TWO}[int(serial_config.get("stopbits", 1))],
-            "bytesize": {7: SEVENBITS, 8: EIGHTBITS}[int(serial_config.get("databits", 8))],  # NEW
-        }
+            if not host:
+                messagebox.showerror("Ethernet", "Admin must set Ethernet host in Settings first.")
+                return
 
-        try:
-            self.dev.connect(port, **kwargs)
-            self._set_status(f"Connected {port} @ {self.cfg['serial']['baud']}")
-            self.btn_connect["state"] = "disabled"; self.btn_disconnect["state"] = "normal"
+            try:
+                self.dev.connect_tcp(host, port)
+            except Exception as e:
+                messagebox.showerror("Ethernet", f"Could not connect to {host}:{port}\n{e}")
+                return
+
+            self._set_status(f"Connected (TCP) {host}:{port}")
+            self.btn_connect["state"] = "disabled"
+            self.btn_disconnect["state"] = "normal"
             self._update_start_enabled()
-            # color only: menubar looks disabled
             self._menubar_set_disabled_color(True)
 
-            # DISABLE top menus + Load CSV + Pattern
+            # DISABLE top menus + Load CSV + Pattern (same as before)
             self._menus_enabled = False
             try: self.btn_load_csv["state"] = "disabled"
             except Exception: pass
             try: self.ent_pattern["state"] = "disabled"
             except Exception: pass
 
-            # after successful connect
-            self._audit("serial connect", f"port={port}; baud={kwargs['baudrate']}; parity={self.cfg['serial'].get('parity')}; stopbits={self.cfg['serial'].get('stopbits')}; bytesize={self.cfg['serial'].get('databits')}")
             try:
-                logs.append_event(getattr(self.user,"username",""),
-                                "serial connected",
-                                -1,
-                                f"{port}@{serial_config.get('baud')} parity={serial_config.get('parity')} stop={serial_config.get('stopbits')} bytesize={serial_config.get('databits')}",
-                                None)
-                                # --- LIVE verification (optional) ---
-                mode = self.cfg.get("connection_mode", "test")  # default keeps old behavior
+                logs.append_event(
+                    getattr(self.user, "username", ""),
+                    "ethernet connected",
+                    -1,
+                    f"{host}:{port}",
+                    None,
+                )
+            except Exception:
+                pass
+
+        else:
+            # SERIAL branch (original behavior)
+            serial_config = self.cfg["serial"]
+            port = serial_config.get("port","")
+            if not port:
+                messagebox.showerror("Serial", "Admin must set Port in Settings first.")
+                return
+            kwargs = {
+                "baudrate": int(serial_config.get("baud", 9600)),
+                "parity":   {"N": "N", "E": "E", "O": "O"}[serial_config.get("parity","N")],
+                "stopbits": int(serial_config.get("stopbits", 1)),
+                "bytesize": int(serial_config.get("databits", 8)),
+            }
+            from serial import (
+                PARITY_NONE, PARITY_EVEN, PARITY_ODD,
+                STOPBITS_ONE, STOPBITS_TWO,
+                SEVENBITS, EIGHTBITS,
+            )
+            kwargs["parity"] = {
+                "N": PARITY_NONE,
+                "E": PARITY_EVEN,
+                "O": PARITY_ODD,
+            }[serial_config.get("parity", "N")]
+            kwargs["stopbits"] = {
+                1: STOPBITS_ONE,
+                2: STOPBITS_TWO,
+            }[int(serial_config.get("stopbits", 1))]
+            kwargs["bytesize"] = {
+                7: SEVENBITS,
+                8: EIGHTBITS,
+            }[int(serial_config.get("databits", 8))]
+
+            try:
+                self.dev.connect(port, **kwargs)
+            except Exception as e:
+                messagebox.showerror("Serial", f"Could not open {port}\n{e}")
+                return
+
+            self._set_status(f"Connected (serial) {port} @ {self.cfg['serial']['baud']}")
+            self.btn_connect["state"] = "disabled"
+            self.btn_disconnect["state"] = "normal"
+            self._update_start_enabled()
+            self._menubar_set_disabled_color(True)
+
+            # DISABLE top menus + Load CSV + Pattern (same as before)
+            self._menus_enabled = False
+            try: self.btn_load_csv["state"] = "disabled"
+            except Exception: pass
+            try: self.ent_pattern["state"] = "disabled"
+            except Exception: pass
+
+            # original audit/logging
+            self._audit("serial connect",
+                        f"port={port}; baud={serial_config.get('baud')}; "
+                        f"parity={serial_config.get('parity')}; "
+                        f"stopbits={serial_config.get('stopbits')}; "
+                        f"bytesize={serial_config.get('databits')}")
+            try:
+                logs.append_event(
+                    getattr(self.user,"username",""),
+                    "serial connected",
+                    -1,
+                    f"{port}@{serial_config.get('baud')} parity={serial_config.get('parity')} "
+                    f"stopbits={serial_config.get('stopbits')} bytesize={serial_config.get('databits')}",
+                    None,
+                )
+                # live verification unchanged
+                mode = self.cfg.get("connection_mode", "test")
                 if mode == "live":
                     ok, status, raw = self.dev.verify_live_connection(tries=2, sleep_ms=120)
                     if not ok:
-                        # log and tear down if it's not actually the BM470 speaking Extended Protocol
                         try:
                             user = getattr(self.user, "username", "") if self.user else ""
                             logs.append_event(
                                 user,
                                 "serial verification FAILED",
                                 -1,
-                                f"{port}@{serial_config.get('baud')} parity={serial_config.get('parity')} stop={serial_config.get('stopbits')} bytesize={serial_config.get('databits')}",
+                                f"{port}@{serial_config.get('baud')} parity={serial_config.get('parity')} "
+                                f"stopbits={serial_config.get('stopbits')} bytesize={serial_config.get('databits')}",
                                 "no CR-terminated status"
                             )
                         except Exception:
@@ -2372,25 +2543,15 @@ class App(tk.Tk):
                             self.dev.disconnect()
                         except Exception:
                             pass
+                        self._set_status("Not connected (verification failed)")
                         self.btn_connect["state"] = "normal"
                         self.btn_disconnect["state"] = "disabled"
                         self.btn_start["state"] = "disabled"
-                        self._set_status("Not connected")
-                        self._disconnect()
-                        messagebox.showerror("Serial", "Printer did not respond to status poll.\nCheck cable/port and controller power.")
                         return
-                    else:
-                        # optional: note successful live verification
-                        try:
-                            user = getattr(self.user, "username", "") if self.user else ""
-                            logs.append_event(user, "serial verified live", -1, status or "", None)
-                        except Exception:
-                            pass
-
             except Exception:
                 pass
-        except Exception as e:
-            messagebox.showerror("Serial", str(e))
+
+
 
     def _disconnect(self):
         try:
@@ -2419,7 +2580,9 @@ class App(tk.Tk):
         self._audit("serial disconnect", "")
 
     def _update_start_enabled(self):
-        ok = (getattr(self.dev, "ser", None) and self.dev.ser.is_open and self.data)
+        is_conn = getattr(self.dev, "is_connected", None)
+        connected = bool(is_conn and self.dev.is_connected())
+        ok = connected and bool(self.data)
         self.btn_start["state"] = ("normal" if ok and not self.running else "disabled")
 
     # ---------- BATCH ----------
@@ -2427,15 +2590,27 @@ class App(tk.Tk):
         if self.running:
             return
         pat = self.ent_pattern.get().strip()
-        if self.cfg.get("pattern","") != pat:
+        if not pat:
+            pat = (self.cfg.get("pattern") or "").strip()
+            if not pat:
+                messagebox.showerror("Pattern", "No pattern specified and no default in settings!")
+                return
+            # Update UI + remember last pattern
+            self.ent_pattern.delete(0, "end")
+            self.ent_pattern.insert(0, pat)
+        old_active = (self.cfg.get("pattern_active") or "").strip()
+        if old_active != pat:
             try:
                 logs.append_event(getattr(self.user,"username",""), "pattern changed", -1,
-                                f"{self.cfg.get('pattern','')}→{pat}", None)
+                                f"{old_active}→{pat}", None)
             except Exception:
                 pass
-        self.cfg["pattern"] = pat; cs.save_config(self.cfg)
+        self.cfg["pattern_active"] = pat
+        try:
+            cs.save_config(self.cfg)
+        except Exception:
+            pass
         self._audit("batch start", f"pattern={pat}")
-
 
         self.paused = False
         self.running = True
@@ -2484,12 +2659,13 @@ class App(tk.Tk):
         self.stopped = True 
         self.btn_stop["state"] = "disabled"
         # If your policy is "enable back only after STOP + DISCONNECT", restore color here
-        is_connected = bool(getattr(self, "dev", None)
-                            and getattr(getattr(self, "dev", None), "ser", None)
-                            and getattr(self.dev.ser, "is_open", False))
+        is_connected = bool(
+            getattr(self, "dev", None)
+            and getattr(self.dev, "is_connected", None)
+            and self.dev.is_connected()
+        )
         if not is_connected:
             self._menubar_set_disabled_color(False)
-
         try:
             logs.append_event(getattr(self.user,"username",""), "print paused", -1, "operator requested stop", None)
         except Exception:
