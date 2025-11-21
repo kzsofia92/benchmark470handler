@@ -10,8 +10,8 @@
   "pattern": "TEST",
   "resume": {
     "path": "C:/Users/Logisztika/Documents/bigtest.log.csv",
-    "highlight": 9,
-    "next": 9,
+    "highlight": 8,
+    "next": 8,
     "pending": true,
     "field": 0
   },

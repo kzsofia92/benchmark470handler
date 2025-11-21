@@ -218,11 +218,43 @@ class TMC470:
         time.sleep(0.15)
 
     def disconnect(self) -> None:
-        if self.ser:
+        """
+        Fully drop the connection:
+        - flush buffers
+        - lower handshake lines (DTR/RTS)
+        - close the port
+        - clear self.ser
+        """
+        ser = self.ser
+        if not ser:
+            return
+        try:
+            # best-effort cleanup, ignore individual failures
             try:
-                self.ser.close()
+                try:
+                    ser.reset_output_buffer()
+                except Exception:
+                    pass
+                try:
+                    ser.reset_input_buffer()
+                except Exception:
+                    pass
+                try:
+                    ser.dtr = False
+                except Exception:
+                    pass
+                try:
+                    ser.rts = False
+                except Exception:
+                    pass
             finally:
-                self.ser = None
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+        finally:
+            self.ser = None
+
         if self.sock:
             try:
                 self.sock.close()

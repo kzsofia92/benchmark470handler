@@ -260,13 +260,12 @@ class Login(tk.Toplevel):
 class SettingsDialog(tk.Toplevel):
     def __init__(self, master, cfg: dict, on_save):
         super().__init__(master)
+        self.withdraw() 
         self.title("Settings ⚙️")
         self.resizable(False, False)
         self.on_save = on_save
         self.cfg = cfg
         self.transient(master)
-        center(self)  # keep your existing centering
-        self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
         s = cfg["serial"]
@@ -389,6 +388,17 @@ class SettingsDialog(tk.Toplevel):
         btns.grid(row=10, column=0, columnspan=3, pady=10)
         ttk.Button(btns, text="Save", command=self._save).pack(side="left", padx=6)
         ttk.Button(btns, text="Cancel", command=self._close).pack(side="left", padx=6)
+
+        self.update_idletasks()
+        try:
+            center(self)  # same helper you already use elsewhere
+        except Exception:
+            pass
+        self.deiconify()               # show the dialog
+        self.lift()
+        self.attributes("-topmost", True)
+        self.after(0, lambda: self.attributes("-topmost", False))
+        self.grab_set() 
 
         # Apply initial mode (enables/disables fields)
         self._apply_io_mode()
