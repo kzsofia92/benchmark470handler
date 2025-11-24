@@ -1,6 +1,7 @@
 # app.py
 import csv
 import threading, queue
+import time
 from typing import List, Optional
 
 import tkinter as tk
@@ -383,9 +384,17 @@ class SettingsDialog(tk.Toplevel):
         self.cb_data_mode.set(cfg.get("data_send_mode", "Q"))
         self.cb_data_mode.grid(row=9, column=2, sticky="we")
 
+        # Print trigger mode (automatic/manual)
+        ttk.Label(frm, text="Print trigger mode").grid(row=10, column=1, sticky="e", pady=4, padx=4)
+        self.cb_trigger_mode = ttk.Combobox(frm, width=22, state="readonly",
+                                            values=["automatic", "manual"])
+        self.cb_trigger_mode.set(cfg.get("print_trigger_mode", "automatic"))
+        self.cb_trigger_mode.grid(row=10, column=2, sticky="we")
+
+
         # Row 10 – Buttons
         btns = ttk.Frame(frm)
-        btns.grid(row=10, column=0, columnspan=3, pady=10)
+        btns.grid(row=11, column=0, columnspan=3, pady=10)
         ttk.Button(btns, text="Save", command=self._save).pack(side="left", padx=6)
         ttk.Button(btns, text="Cancel", command=self._close).pack(side="left", padx=6)
 
@@ -501,6 +510,7 @@ class SettingsDialog(tk.Toplevel):
         self.cfg["connection_mode"] = self.cb_mode.get().strip()
         self.cfg["data_send_mode"] = self.cb_data_mode.get().strip()
         self.cfg["io_mode"] = (self.io_mode_var.get() or "serial").lower()
+        self.cfg["print_trigger_mode"]=self.cb_trigger_mode.get().strip()
 
         self.on_save(self.cfg)
         self._close()
@@ -2255,7 +2265,7 @@ class App(tk.Tk):
     def _update_admin_controls(self):
         is_admin = bool(self.user and self.user.role == "admin")
         state = "normal" if is_admin else "disabled"
-        self.menu_settings.entryconfig("Serial…", state=state)
+        self.menu_settings.entryconfig("Configuration", state=state)
         self.menu_settings.entryconfig("Users…", state=state)
 
         logs_state = "normal" if self.user else "disabled"
@@ -2349,6 +2359,23 @@ class App(tk.Tk):
             self._log(f"[RESUME] Highlight row {hi+1}, next to send: row {nx+1}")
         else:
             self.resume_index = 0
+
+    def _wait_for_external_go(self):
+        """
+        Dynamic Java-equivalent:
+        External GO = controller transitions to MACHINE_STATUS_PRINTING.
+        No static mapping, no wiring, pure protocol.
+        """
+        while self.running and not self.paused:
+            try:
+                status, raw = self.dev.poll_machine_status()
+                if status == "MACHINE_STATUS_PRINTING":
+                    self.q.put(("log", f"[MANUAL] External GO detected → {raw.strip()}"))
+                    return True
+            except Exception as e:
+                self.q.put(("log", f"[ERROR] wait_for_external_go: {e}"))
+            time.sleep(0.05)
+        return False
 
 
     def _parse_csv_text(self, text: str):
@@ -2979,31 +3006,73 @@ class App(tk.Tk):
                         break
 
                 # START PRINT (G)
-                try:
+                # try:
+                #     try:
+                #         self.q.put(("log", f"[FRAME] {self._preview_extended_frame('G', '', '')}"))
+                #     except Exception:
+                #         pass
+                #     rs = self.dev.start_print()
+                #     self.q.put(("log", f"[START] {self._short(rs)}"))
+                #     logs.append_event(user_name, "print started", idx, line_text, None)
+                # except Exception as e:
+                #     msg = f"start_print error: {e}"
+                #     self.q.put(("log", f"[ERROR] {msg}"))
+                #     logs.append_event(user_name, "print started", idx, line_text, msg)
+                #     decision = self._timeout_decision(idx, "G", 0.0)
+                #     if decision == "repeat":
+                #         # retry SAME ROW print (V/Q content is already there)
+                #         continue
+                #     elif decision == "continue":
+                #         self._save_resume(idx, idx + 1, 0)
+                #         idx += 1
+                #         field0 = 0
+                #         continue
+                #     elif decision == "exit":
+                #         self._save_resume(idx, idx, 0)
+                #         self.paused = True
+                #         break
+
+                trigger_mode = self.cfg.get("print_trigger_mode", "automatic").strip().lower()
+
+                if trigger_mode == "automatic":
+                    # --- AUTOMATIC MODE (unchanged) ---
                     try:
-                        self.q.put(("log", f"[FRAME] {self._preview_extended_frame('G', '', '')}"))
-                    except Exception:
-                        pass
-                    rs = self.dev.start_print()
-                    self.q.put(("log", f"[START] {self._short(rs)}"))
-                    logs.append_event(user_name, "print started", idx, line_text, None)
-                except Exception as e:
-                    msg = f"start_print error: {e}"
-                    self.q.put(("log", f"[ERROR] {msg}"))
-                    logs.append_event(user_name, "print started", idx, line_text, msg)
-                    decision = self._timeout_decision(idx, "G", 0.0)
-                    if decision == "repeat":
-                        # retry SAME ROW print (V/Q content is already there)
-                        continue
-                    elif decision == "continue":
-                        self._save_resume(idx, idx + 1, 0)
-                        idx += 1
-                        field0 = 0
-                        continue
-                    elif decision == "exit":
+                        try:
+                            self.q.put(("log", f"[FRAME] {self._preview_extended_frame('G', '', '')}"))
+                        except Exception:
+                            pass
+                        rs = self.dev.start_print()
+                        self.q.put(("log", f"[START] {self._short(rs)}"))
+                        logs.append_event(user_name, "print started", idx, line_text, None)
+                    except Exception as e:
+                        msg = f"start_print error: {e}"
+                        self.q.put(("log", f"[ERROR] {msg}"))
+                        logs.append_event(user_name, "print started", idx, line_text, msg)
+                        decision = self._timeout_decision(idx, "G", 0.0)
+                        if decision == "repeat":
+                            self._save_resume(idx, idx, 0)
+                            continue
+                        elif decision == "continue":
+                            self._save_resume(idx, idx + 1, 0)
+                            idx += 1
+                            continue
+                        elif decision == "exit":
+                            self._save_resume(idx, idx, 0)
+                            self.paused = True
+                            break
+
+                else:
+                    # --- MANUAL MODE (JAVA EQUIVALENT) ---
+                    self.q.put(("log", "[MANUAL] Waiting for external GO (PRINTING)…"))
+                    logs.append_event(user_name, "print waiting external GO", idx, line_text, None)
+
+                    if not self._wait_for_external_go():
+                        self.q.put(("log", "[MANUAL] External GO aborted/cancelled"))
                         self._save_resume(idx, idx, 0)
-                        self.paused = True
                         break
+
+                    logs.append_event(user_name, "print started (external GO)", idx, line_text, None)
+
 
                 if getattr(self, "paused", False) or not self.running:
                     self._save_resume(idx, idx, 0)
