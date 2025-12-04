@@ -72,6 +72,17 @@ COMMANDS = {
     "START_PRINT":          ("G", None),
 }
 
+
+PROGRAMMABLE_CMDS = {
+    "TYPE_1": lambda value: f"{value}\r",
+    "TYPE_P": lambda pattern: f"P{pattern}\r",
+    "TYPE_Q": lambda data: f"Q{data}\r",
+    "TYPE_V": lambda data: f"V{data}\r",
+    # Tnn<string>
+    "TYPE_0": lambda T, nn, value: f"{T}{nn}{value}\r",
+}
+
+
 # ------------------ IO “ready/done” codes from config.properties ------------------
 # printer.done      = 42
 # printer.readydone = 43
@@ -598,3 +609,38 @@ class TMC470:
                 return True, status, raw
             time.sleep(sleep_ms / 1000.0)
         return False, "", last_raw
+    
+    def send_programmable(self, text: str) -> None:
+        """
+        Raw programmable protocol sender.
+        No framing. No BCC. No STX/ETX. CR termination only.
+        """
+        if not text.endswith("\r"):
+            text += "\r"
+
+        if self.ser and self.ser.is_open:
+            self.ser.write(text.encode("ascii"))
+            self.ser.flush()
+        elif self.sock:
+            self.sock.sendall(text.encode("ascii"))
+
+    def prog_type1(self, data: str):
+        self.send_programmable(PROGRAMMABLE_CMDS["TYPE_1"](data))
+
+    def prog_load_pattern(self, pattern: str):
+        self.send_programmable(PROGRAMMABLE_CMDS["TYPE_P"](pattern))
+
+    def prog_set_query(self, data: str):
+        self.send_programmable(PROGRAMMABLE_CMDS["TYPE_Q"](data))
+
+    def prog_set_variable(self, field_id: int, value: str):
+        nn = f"{field_id:02d}"
+        self.send_programmable(PROGRAMMABLE_CMDS["TYPE_0"]("V", nn, value))
+
+    def prog_set_query_numbered(self, buf_id: int, value: str):
+        nn = f"{buf_id:02d}"
+        self.send_programmable(PROGRAMMABLE_CMDS["TYPE_0"]("Q", nn, value))
+
+    def prog_load_pattern_numbered(self, field_id: int, pattern: str):
+        nn = f"{field_id:02d}"
+        self.send_programmable(PROGRAMMABLE_CMDS["TYPE_0"]("P", nn, pattern))

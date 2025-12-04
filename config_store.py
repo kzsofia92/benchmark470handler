@@ -19,6 +19,7 @@ DEFAULTS = {
     "connection_mode": "live",  # "test" | "live"
     "data_send_mode": "Q",  # "Q" | "V" | "custom"
     "print_trigger_mode": "manual", # "automatic" | "manual"
+    "protocol": "extended",  # "extended" | "programmable"
 }
 
 def load_config() -> Dict[str, Any]:

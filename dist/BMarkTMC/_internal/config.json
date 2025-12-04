@@ -10,10 +10,10 @@
   "pattern": "TEST",
   "resume": {
     "path": "C:/Users/Logisztika/Documents/bigtest.log.csv",
-    "highlight": 9,
-    "next": 9,
+    "highlight": 0,
+    "next": 0,
     "pending": true,
-    "field": 1
+    "field": 0
   },
   "connection_mode": "test",
   "data_send_mode": "CUSTOM",
@@ -39,9 +39,11 @@
   ],
   "ethernet": {
     "host": "192.168.10.22",
-    "port": 10000
+    "port": 10000,
+    "ip": ""
   },
   "io_mode": "serial",
   "pattern_active": "TEST",
-  "print_trigger_mode": "automatic"
+  "print_trigger_mode": "manual",
+  "protocol": "programmable"
 }

@@ -20,6 +20,13 @@
       "pwd_salt_b64": "Cw45xLit8dwSR/1Wgnmf3Q==",
       "pwd_hash_b64": "IMoiXmouRex7DOLetvQDU7i7dZM5QiXmHT4RH0sL2JU=",
       "iterations": 120000
+    },
+    "developer": {
+      "username": "developer",
+      "role": "developer",
+      "pwd_salt_b64": "YZTIzok9cZ0oVQc1VGLEnA==",
+      "pwd_hash_b64": "84k7X9nE3kD141OSa4I+aCSSdxwCy56XRFQIejvB0/Y=",
+      "iterations": 120000
     }
   }
 }

@@ -259,264 +259,314 @@ class Login(tk.Toplevel):
 
 # -------------------- SETTINGS --------------------
 class SettingsDialog(tk.Toplevel):
-    def __init__(self, master, cfg: dict, on_save):
-        super().__init__(master)
-        self.withdraw() 
-        self.title("Settings ⚙️")
-        self.resizable(False, False)
-        self.on_save = on_save
-        self.cfg = cfg
-        self.transient(master)
-        self.protocol("WM_DELETE_WINDOW", self._close)
+    """
+    Serial/Ethernet + data send/trigger + protocol selector.
 
-        s = cfg["serial"]
-        eth = cfg.get("ethernet", {})
-        io_mode = (cfg.get("io_mode", "serial") or "serial").lower()
-        if io_mode not in ("serial", "ethernet"):
-            io_mode = "serial"
+    NOTE:
+    - Connection mode + Protocol are visible ONLY for role == "developer".
+    - Protocol is stored in cfg["protocol"] ("extended" or "programmable").
+    """
+    def __init__(self, master, cfg, on_save):
+        super().__init__(master)
+        self.withdraw()
+        self.title("Serial / Ethernet settings")
+        self.resizable(False, False)
+        self.cfg = dict(cfg or {})
+        self.on_save = on_save
+
+        root_parent = master.winfo_toplevel()
+        self.transient(root_parent)
+
+        # determine if current user is developer
+        cur_user = getattr(master, "user", None)
+        self._is_developer = bool(cur_user and getattr(cur_user, "role", "") == "developer")
 
         frm = ttk.Frame(self, padding=12)
         frm.pack(fill="both", expand=True)
-        # 0: radio, 1: label, 2: input
-        frm.columnconfigure(0, weight=0)
-        frm.columnconfigure(1, weight=0)
-        frm.columnconfigure(2, weight=1)
 
-        # ---------------- IO MODE RADIO STATE ----------------
+        # ------- IO MODE -------
+        io_mode = self.cfg.get("io_mode", "serial")
         self.io_mode_var = tk.StringVar(value=io_mode)
 
-        # ---------------- SERIAL SECTION ----------------
-        # Row 0 – Serial radio + Port
-        self.rb_serial = ttk.Radiobutton(
-            frm,
-            text="Serial",
-            variable=self.io_mode_var,
-            value="serial",
-            command=self._apply_io_mode,
+        ttk.Label(frm, text="I/O mode").grid(row=0, column=0, sticky="e", padx=4, pady=4)
+        rb_serial = ttk.Radiobutton(
+            frm, text="Serial", value="serial", variable=self.io_mode_var,
+            command=self._apply_io_mode
         )
-        self.rb_serial.grid(row=0, column=0, sticky="w", pady=4, padx=(0, 4))
+        rb_eth = ttk.Radiobutton(
+            frm, text="Ethernet", value="ethernet", variable=self.io_mode_var,
+            command=self._apply_io_mode
+        )
+        rb_serial.grid(row=0, column=1, sticky="w", padx=4, pady=4)
+        rb_eth.grid(row=0, column=2, sticky="w", padx=4, pady=4)
 
-        ttk.Label(frm, text="Port").grid(row=0, column=1, sticky="e", pady=4, padx=4)
-        ports = TMC470.list_ports()
-        self.cb_port = ttk.Combobox(frm, width=22, values=ports, state="readonly")
-        self.cb_port.set(s.get("port", "") or (ports[0] if ports else ""))
-        self.cb_port.grid(row=0, column=2, sticky="we")
+        # ------- SERIAL BLOCK -------
+        s_cfg = self.cfg.get("serial", {}) or {}
+        port = s_cfg.get("port", "")
+        baud = s_cfg.get("baud", 9600)
+        parity = s_cfg.get("parity", "E")
+        stopbits = s_cfg.get("stopbits", 1)
+        databits = s_cfg.get("databits", 7)
 
-        # Row 1 – Baud
-        ttk.Label(frm, text="Baud").grid(row=1, column=1, sticky="e", pady=4, padx=4)
-        self.ent_baud = ttk.Entry(frm, width=24)
-        self.ent_baud.insert(0, str(s.get("baud", SERIAL_DEFAULTS["baudrate"])))
-        self.ent_baud.grid(row=1, column=2, sticky="we")
+        ttk.Label(frm, text="Port").grid(row=1, column=0, sticky="e", padx=4, pady=4)
+        self.cb_port = ttk.Combobox(
+            frm,
+            width=18,
+            values=TMC470.list_ports(),
+            state="readonly",
+        )
+        if port:
+            self.cb_port.set(port)
+        self.cb_port.grid(row=1, column=1, columnspan=2, sticky="we")
 
-        # Row 2 – Parity
-        ttk.Label(frm, text="Parity").grid(row=2, column=1, sticky="e", pady=4, padx=4)
+        ttk.Label(frm, text="Baud").grid(row=2, column=0, sticky="e", padx=4, pady=4)
+        self.ent_baud = ttk.Entry(frm, width=10)
+        self.ent_baud.insert(0, str(baud))
+        self.ent_baud.grid(row=2, column=1, sticky="w", padx=4, pady=4)
+
+        ttk.Label(frm, text="Parity").grid(row=3, column=0, sticky="e", padx=4, pady=4)
         self.cb_parity = ttk.Combobox(
-            frm, width=22, values=list(PARITY_MAP.keys()), state="readonly"
+            frm,
+            width=8,
+            values=["N", "E", "O"],
+            state="readonly",
         )
-        self.cb_parity.set(s.get("parity", "N"))
-        self.cb_parity.grid(row=2, column=2, sticky="we")
+        self.cb_parity.set(parity)
+        self.cb_parity.grid(row=3, column=1, sticky="w", padx=4, pady=4)
 
-        # Row 3 – Stop bits
-        ttk.Label(frm, text="Stop bits").grid(row=3, column=1, sticky="e", pady=4, padx=4)
+        ttk.Label(frm, text="Stop bits").grid(row=4, column=0, sticky="e", padx=4, pady=4)
         self.cb_stop = ttk.Combobox(
-            frm, width=22, values=[str(x) for x in STOPBITS_CHOICES], state="readonly"
+            frm,
+            width=8,
+            values=[1, 2],
+            state="readonly",
         )
-        self.cb_stop.set(str(s.get("stopbits", 1)))
-        self.cb_stop.grid(row=3, column=2, sticky="we")
+        self.cb_stop.set(stopbits)
+        self.cb_stop.grid(row=4, column=1, sticky="w", padx=4, pady=4)
 
-        # Row 4 – Data bits
-        ttk.Label(frm, text="Data bits").grid(row=4, column=1, sticky="e", pady=4, padx=4)
+        ttk.Label(frm, text="Data bits").grid(row=5, column=0, sticky="e", padx=4, pady=4)
         self.cb_data = ttk.Combobox(
-            frm, width=22, values=[str(x) for x in DATABITS_CHOICES], state="readonly"
-        )
-        self.cb_data.set(str(s.get("databits", 8)))
-        self.cb_data.grid(row=4, column=2, sticky="we")
-
-        # ---------------- ETHERNET SECTION ----------------
-        # Row 5 – Ethernet radio + IP
-        self.rb_ethernet = ttk.Radiobutton(
             frm,
-            text="Ethernet",
-            variable=self.io_mode_var,
-            value="ethernet",
-            command=self._apply_io_mode,
+            width=8,
+            values=[7, 8],
+            state="readonly",
         )
-        self.rb_ethernet.grid(row=5, column=0, sticky="w", pady=4, padx=(0, 4))
+        self.cb_data.set(databits)
+        self.cb_data.grid(row=5, column=1, sticky="w", padx=4, pady=4)
 
-        ttk.Label(frm, text="IP address").grid(row=5, column=1, sticky="e", pady=4, padx=4)
+        # ------- ETHERNET BLOCK -------
+        e_cfg = self.cfg.get("ethernet", {}) or {}
+        ip = e_cfg.get("ip", "")
+        eport = e_cfg.get("port", 10000)
 
-        vcmd_ip = self.register(self._vc_ip)
-        self.ent_ip = ttk.Entry(
+        ttk.Label(frm, text="IP").grid(row=6, column=0, sticky="e", padx=4, pady=4)
+        vcmd_ip = (self.register(self._vc_ip), "%P")
+        self.ent_ip = ttk.Entry(frm, width=16, validate="key", validatecommand=vcmd_ip)
+        self.ent_ip.insert(0, ip)
+        self.ent_ip.grid(row=6, column=1, sticky="w", padx=4, pady=4)
+
+        ttk.Label(frm, text="Port").grid(row=6, column=2, sticky="e", padx=4, pady=4)
+        self.ent_eport = ttk.Entry(frm, width=8)
+        self.ent_eport.insert(0, str(eport))
+        self.ent_eport.grid(row=6, column=3, sticky="w", padx=4, pady=4)
+
+        # ------- PATTERN (default) -------
+        ttk.Label(frm, text="Default pattern").grid(row=7, column=0, sticky="e", padx=4, pady=4)
+        self.ent_pattern = ttk.Entry(frm, width=16)
+        self.ent_pattern.insert(0, str(self.cfg.get("pattern", "")))
+        self.ent_pattern.grid(row=7, column=1, columnspan=3, sticky="we", padx=4, pady=4)
+
+        # ------- CONNECTION MODE (developer-only visible) -------
+        self.lbl_mode = ttk.Label(frm, text="Connection mode")
+        self.lbl_mode.grid(row=8, column=0, sticky="e", padx=4, pady=4)
+
+        self.cb_mode = ttk.Combobox(
             frm,
-            width=24,
-            validate="key",
-            validatecommand=(vcmd_ip, "%P"),
+            width=22,
+            state="readonly",
+            values=["test", "live"],
         )
-        self.ent_ip.insert(0, eth.get("host", ""))
-        self.ent_ip.grid(row=5, column=2, sticky="we")
-        # Auto insert dots after 3 digits in a block
-        self.ent_ip.bind("<KeyRelease>", self._on_ip_key)
+        self.cb_mode.set(self.cfg.get("connection_mode", "test"))
+        self.cb_mode.grid(row=8, column=1, columnspan=3, sticky="we", padx=4, pady=4)
 
-        # Row 6 – Ethernet port
-        ttk.Label(frm, text="TCP port").grid(row=6, column=1, sticky="e", pady=4, padx=4)
-        self.ent_eport = ttk.Entry(frm, width=24)
-        self.ent_eport.insert(0, str(eth.get("port", 10000)))
-        self.ent_eport.grid(row=6, column=2, sticky="we")
-
-        # ---------------- COMMON SECTION ----------------
-        # Row 7 – Default pattern
-        ttk.Label(frm, text="Default pattern").grid(row=7, column=1, sticky="e", pady=4, padx=4)
-        self.ent_pattern = ttk.Entry(frm, width=24)
-        self.ent_pattern.insert(0, cfg.get("pattern", ""))
-        self.ent_pattern.grid(row=7, column=2, sticky="we")
-
-        # Row 8 – Connection mode
-        ttk.Label(frm, text="Connection mode").grid(row=8, column=1, sticky="e", pady=4, padx=4)
-        self.cb_mode = ttk.Combobox(frm, width=22, state="readonly", values=["test", "live"])
-        self.cb_mode.set(cfg.get("connection_mode", "test"))
-        self.cb_mode.grid(row=8, column=2, sticky="we")
-
-        # Row 9 – Data send mode
-        ttk.Label(frm, text="Data send mode").grid(row=9, column=1, sticky="e", pady=4, padx=4)
+        # ------- DATA SEND MODE -------
+        ttk.Label(frm, text="Data send mode").grid(row=9, column=0, sticky="e", padx=4, pady=4)
         self.cb_data_mode = ttk.Combobox(
-            frm, width=22, state="readonly", values=["V", "Q", "CUSTOM"]
+            frm,
+            width=22,
+            state="readonly",
+            values=["V", "Q", "CUSTOM"],
         )
-        self.cb_data_mode.set(cfg.get("data_send_mode", "Q"))
-        self.cb_data_mode.grid(row=9, column=2, sticky="we")
+        self.cb_data_mode.set(self.cfg.get("data_send_mode", "Q"))
+        self.cb_data_mode.grid(row=9, column=1, columnspan=3, sticky="we", padx=4, pady=4)
 
-        # Print trigger mode (automatic/manual)
-        ttk.Label(frm, text="Print trigger mode").grid(row=10, column=1, sticky="e", pady=4, padx=4)
-        self.cb_trigger_mode = ttk.Combobox(frm, width=22, state="readonly",
-                                            values=["automatic", "manual"])
-        self.cb_trigger_mode.set(cfg.get("print_trigger_mode", "automatic"))
-        self.cb_trigger_mode.grid(row=10, column=2, sticky="we")
+        # ------- PRINT TRIGGER MODE -------
+        ttk.Label(frm, text="Print trigger mode").grid(row=10, column=0, sticky="e", padx=4, pady=4)
+        self.cb_trigger_mode = ttk.Combobox(
+            frm,
+            width=22,
+            state="readonly",
+            values=["automatic", "manual"],
+        )
+        self.cb_trigger_mode.set(self.cfg.get("print_trigger_mode", "automatic"))
+        self.cb_trigger_mode.grid(row=10, column=1, columnspan=3, sticky="we", padx=4, pady=4)
 
+        # ------- PROTOCOL (developer-only visible) -------
+        self.lbl_protocol = ttk.Label(frm, text="Protocol")
+        self.lbl_protocol.grid(row=11, column=0, sticky="e", padx=4, pady=4)
 
-        # Row 10 – Buttons
+        proto = (self.cfg.get("protocol", "extended") or "extended").lower()
+        if proto not in ("extended", "programmable"):
+            proto = "extended"
+
+        self.cb_protocol = ttk.Combobox(
+            frm,
+            width=22,
+            state="readonly",
+            values=["extended", "programmable"],
+        )
+        self.cb_protocol.set(proto)
+        self.cb_protocol.grid(row=11, column=1, columnspan=3, sticky="we", padx=4, pady=4)
+
+        # Hide connection mode + protocol widgets for non-developer
+        if not self._is_developer:
+            for w in (self.lbl_mode, self.cb_mode, self.lbl_protocol, self.cb_protocol):
+                try:
+                    w.grid_remove()
+                except Exception:
+                    pass
+
+        # ------- BUTTONS -------
         btns = ttk.Frame(frm)
-        btns.grid(row=11, column=0, columnspan=3, pady=10)
+        btns.grid(row=12, column=0, columnspan=4, pady=10)
         ttk.Button(btns, text="Save", command=self._save).pack(side="left", padx=6)
         ttk.Button(btns, text="Cancel", command=self._close).pack(side="left", padx=6)
 
+        # apply mode (enables/disables serial vs ethernet)
+        self._apply_io_mode()
+
         self.update_idletasks()
         try:
-            center(self)  # same helper you already use elsewhere
+            center(self)
         except Exception:
             pass
-        self.deiconify()               # show the dialog
+        self.deiconify()
         self.lift()
         self.attributes("-topmost", True)
         self.after(0, lambda: self.attributes("-topmost", False))
-        self.grab_set() 
-
-        # Apply initial mode (enables/disables fields)
-        self._apply_io_mode()
+        self.grab_set()
 
     # ---------- IO MODE HANDLER ----------
     def _apply_io_mode(self):
         mode = (self.io_mode_var.get() or "serial").lower()
-
         if mode == "ethernet":
-            # disable serial fields
+            # disable serial
             self.cb_port.configure(state="disabled")
             self.ent_baud.configure(state="disabled")
             self.cb_parity.configure(state="disabled")
             self.cb_stop.configure(state="disabled")
             self.cb_data.configure(state="disabled")
 
-            # enable ethernet fields
+            # enable ethernet
             self.ent_ip.configure(state="normal")
             self.ent_eport.configure(state="normal")
         else:
-            # serial
+            # enable serial
             self.cb_port.configure(state="readonly")
             self.ent_baud.configure(state="normal")
             self.cb_parity.configure(state="readonly")
             self.cb_stop.configure(state="readonly")
             self.cb_data.configure(state="readonly")
 
-            # disable ethernet fields
+            # disable ethernet
             self.ent_ip.configure(state="disabled")
             self.ent_eport.configure(state="disabled")
 
     # ---------- IP VALIDATOR ----------
     def _vc_ip(self, new_value: str) -> bool:
-        """
-        Allow only digits and dots.
-        Max 4 blocks, each 0–3 digits.
-        """
-        s = new_value
-        if s == "":
+        if not new_value:
             return True
-
-        # Only digits and dots
-        for ch in s:
-            if not (ch.isdigit() or ch == "."):
-                return False
-
-        parts = s.split(".")
-        if len(parts) > 4:
+        if len(new_value) > 15:
             return False
+        allowed = "0123456789."
+        return all(ch in allowed for ch in new_value)
 
-        for part in parts:
-            if len(part) > 3:
-                return False
-            if part and not part.isdigit():
-                return False
-
-        return True
-
-    def _on_ip_key(self, event):
-        """
-        Auto insert '.' after 3 digits in a block, up to 3 dots.
-        """
-        # ignore navigation / deletion keys
-        if event.keysym in ("BackSpace", "Delete", "Left", "Right", "Home", "End"):
-            return
-        if not event.char or not event.char.isdigit():
-            return
-
-        s = self.ent_ip.get()
-        if not s:
-            return
-
-        parts = s.split(".")
-        # if last block has length 3 and we still have less than 4 blocks, append '.'
-        if len(parts) < 4 and len(parts[-1]) == 3 and not s.endswith("."):
-            # avoid messing when field is disabled
-            if str(self.ent_ip["state"]) == "normal":
-                self.ent_ip.insert("end", ".")
-
-    # ---------- SAVE / CLOSE ----------
+    # ---------- SAVE/CLOSE ----------
     def _save(self):
-        # Serial section
-        s = self.cfg["serial"]
-        s["port"] = self.cb_port.get().strip()
-        s["baud"] = int(self.ent_baud.get().strip() or "9600")
-        s["parity"] = self.cb_parity.get().strip()
-        s["stopbits"] = int(self.cb_stop.get().strip() or "1")
-        s["databits"] = int(self.cb_data.get().strip() or "8")
+        cfg = dict(self.cfg)
 
-        # Ethernet section
-        e = self.cfg.setdefault("ethernet", {})
-        e["host"] = self.ent_ip.get().strip()
+        # io mode
+        mode = (self.io_mode_var.get() or "serial").lower()
+        cfg["io_mode"] = mode
+
+        # serial
+        s = dict(cfg.get("serial", {}) or {})
+        s["port"] = self.cb_port.get().strip()
+
+        try:
+            s["baud"] = int(self.ent_baud.get().strip() or "9600")
+        except Exception:
+            s["baud"] = 9600
+
+        s["parity"] = (self.cb_parity.get() or "E").strip() or "E"
+
+        try:
+            s["stopbits"] = int(self.cb_stop.get() or "1")
+        except Exception:
+            s["stopbits"] = 1
+
+        try:
+            s["databits"] = int(self.cb_data.get() or "7")
+        except Exception:
+            s["databits"] = 7
+
+        cfg["serial"] = s
+
+        # ethernet
+        e = dict(cfg.get("ethernet", {}) or {})
+        e["ip"] = self.ent_ip.get().strip()
         try:
             e["port"] = int(self.ent_eport.get().strip() or "10000")
-        except ValueError:
+        except Exception:
             e["port"] = 10000
+        cfg["ethernet"] = e
 
-        # Common
-        self.cfg["pattern"] = self.ent_pattern.get().strip()
-        self.cfg["connection_mode"] = self.cb_mode.get().strip()
-        self.cfg["data_send_mode"] = self.cb_data_mode.get().strip()
-        self.cfg["io_mode"] = (self.io_mode_var.get() or "serial").lower()
-        self.cfg["print_trigger_mode"]=self.cb_trigger_mode.get().strip()
+        # pattern
+        cfg["pattern"] = self.ent_pattern.get().strip()
 
-        self.on_save(self.cfg)
+        # connection mode (stored always, but only developer can change value)
+        conn = self.cb_mode.get().strip() if self._is_developer else cfg.get("connection_mode", "test")
+        if conn not in ("test", "live"):
+            conn = "test"
+        cfg["connection_mode"] = conn
+
+        # data send mode
+        dmode = (self.cb_data_mode.get() or "Q").strip().upper()
+        if dmode not in ("V", "Q", "CUSTOM"):
+            dmode = "Q"
+        cfg["data_send_mode"] = dmode
+
+        # print trigger mode
+        trig = (self.cb_trigger_mode.get() or "automatic").strip().lower()
+        if trig not in ("automatic", "manual"):
+            trig = "automatic"
+        cfg["print_trigger_mode"] = trig
+
+        # protocol (only developer can change, but we always store a valid value)
+        proto = (self.cb_protocol.get() if self._is_developer else cfg.get("protocol", "extended")) or "extended"
+        proto = proto.strip().lower()
+        if proto not in ("extended", "programmable"):
+            proto = "extended"
+        cfg["protocol"] = proto
+
+        self.on_save(cfg)
         self._close()
 
     def _close(self):
-        self.grab_release()
+        try:
+            self.grab_release()
+        except Exception:
+            pass
         self.destroy()
 
 
@@ -587,69 +637,84 @@ class UserManagementDialog(tk.Toplevel):
         self.withdraw()
         self.title("Users")
         self.resizable(False, False)
-        self.transient(master)   # tie to parent
+        self.transient(master)
         self.protocol("WM_DELETE_WINDOW", self._close)
 
-        frm = ttk.Frame(self, padding=12); frm.pack(fill="both", expand=True)
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
 
         # Two columns: Username + Role
-        self.tree = ttk.Treeview(frm, columns=("username","role"), show="headings", height=10)
+        self.tree = ttk.Treeview(
+            frm,
+            columns=("username", "role"),
+            show="headings",
+            height=10,
+        )
         self.tree.heading("username", text="Username")
         self.tree.heading("role", text="Role")
         self.tree.column("username", width=220, anchor="w")
-        self.tree.column("role", width=120, anchor="w")
-        self.tree.grid(row=0, column=0, columnspan=4, sticky="nsew")
+        self.tree.column("role", width=100, anchor="w")
+        self.tree.grid(row=0, column=0, columnspan=3, sticky="nsew", pady=(0, 8))
 
-        sb_y = ttk.Scrollbar(frm, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb_y.set)
-        sb_y.grid(row=0, column=4, sticky="ns")
+        scroll = ttk.Scrollbar(frm, orient="vertical", command=self.tree.yview)
+        scroll.grid(row=0, column=3, sticky="ns", pady=(0, 8))
+        self.tree.configure(yscroll=scroll.set)
 
-        # frame grow
         frm.rowconfigure(0, weight=1)
         frm.columnconfigure(0, weight=1)
 
-        btns = ttk.Frame(frm); btns.grid(row=1, column=0, columnspan=5, pady=8)
-        ttk.Button(btns, text="Add…", command=self._add).pack(side="left", padx=4)
-        ttk.Button(btns, text="Change password…", command=self._change_pwd).pack(side="left", padx=4)
-        ttk.Button(btns, text="Change role…", command=self._change_role).pack(side="left", padx=4)
-        ttk.Button(btns, text="Delete", command=self._delete).pack(side="left", padx=4)
-        ttk.Button(btns, text="Close", command=self._close).pack(side="left", padx=12)
+        bar = ttk.Frame(frm)
+        bar.grid(row=1, column=0, columnspan=4, sticky="ew")
+
+        ttk.Button(bar, text="Add", command=self._add).pack(side="left", padx=4)
+        ttk.Button(bar, text="Change password", command=self._change_pwd).pack(side="left", padx=4)
+        ttk.Button(bar, text="Change role", command=self._change_role).pack(side="left", padx=4)
+        ttk.Button(bar, text="Delete", command=self._delete).pack(side="left", padx=4)
+        ttk.Button(bar, text="Close", command=self._close).pack(side="right", padx=4)
 
         self._reload()
 
-        # ---- Center AFTER layout & make sure it's visible on top ----
-               # ----- final: center like login, then show -----
         self.update_idletasks()
-        try:
-            center(self)
-        except Exception:
-            pass
         self.deiconify()
+        center_on_parent(self, master)
         self.lift()
-        self.attributes("-topmost", True)
-        self.after(0, lambda: self.attributes("-topmost", False))
         self.grab_set()
 
+    def _current_role(self) -> str:
+        """Role of logged-in user (admin/operator/developer)."""
+        user = getattr(self.master, "user", None)
+        return getattr(user, "role", "") if user is not None else ""
 
     def _reload(self):
-        for iid in self.tree.get_children():
-            self.tree.delete(iid)
-        users = auth.list_users()
-        # insert username + role; use username as iid so selection still returns it
+        # clear
+        self.tree.delete(*self.tree.get_children())
+
+        users = auth.list_users()  # {username: {password: "...", role: "..."}}
+        cur_role = self._current_role()
+
         for uname, rec in sorted(users.items()):
-            role = rec.get("role", "")
+            if isinstance(rec, dict):
+                role = rec.get("role", "")
+            else:
+                role = getattr(rec, "role", "")
+
+            # admin MUST NOT see developer users
+            if cur_role == "admin" and role == "developer":
+                continue
+
             self.tree.insert("", "end", iid=uname, values=(uname, role))
 
     def _sel(self):
         sel = self.tree.selection()
-        return sel[0] if sel else None  # iid is the username
+        return sel[0] if sel else None
 
     def _add(self):
-        SimpleAddUser(self, self._added)
+        cur_user = getattr(self.master, "user", None)
+        cur_role = getattr(cur_user, "role", "") if cur_user is not None else ""
+        SimpleAddUser(self, self._added, cur_role)
 
     def _added(self, username, password, role):
         try:
-            # audit.log("user_create", {"username": username, "role": role})
             auth.create_user(username, password, role)
             self._reload()
         except Exception as e:
@@ -658,50 +723,47 @@ class UserManagementDialog(tk.Toplevel):
     def _change_pwd(self):
         u = self._sel()
         if not u:
-            messagebox.showinfo("Users","Select a user"); return
+            messagebox.showinfo("Users", "Select a user")
+            return
         SimpleChangePassword(self, u, self._pwd_changed)
 
-    def _pwd_changed(self, username, newpwd):
+    def _pwd_changed(self, username, new_password):
         try:
-            auth.change_password(username, newpwd)
-            # audit.log("user_change_password", {"username": username})
-            messagebox.showinfo("Users","Password changed.")
+            auth.change_password(username, new_password)
+            messagebox.showinfo("Password", "Password updated")
         except Exception as e:
-            # audit.log("user_change_password_fail", {"username": username, "error": str(e)}, level="ERROR")
-            messagebox.showerror("Change password", str(e))
-
+            messagebox.showerror("Password", str(e))
 
     def _change_role(self):
         u = self._sel()
         if not u:
-            messagebox.showinfo("Users","Select a user"); return
-        SimpleChangeRole(self, u, self._role_changed)
+            messagebox.showinfo("Users", "Select a user")
+            return
 
+        cur_user = getattr(self.master, "user", None)
+        cur_role = getattr(cur_user, "role", "") if cur_user is not None else ""
 
-    def _role_changed(self, username, role):
+        SimpleChangeRole(self, u, self._role_changed, cur_role)
+
+    def _role_changed(self, username, new_role):
         try:
-            old = auth.get_user(username).role if auth.get_user(username) else None
-            auth.set_role(username, role)
-            # audit.log("user_set_role", {"username": username, "old": old, "new": role})
+            auth.change_role(username, new_role)
             self._reload()
         except Exception as e:
-            # audit.log("user_set_role_fail", {"username": username, "error": str(e)}, level="ERROR")
             messagebox.showerror("Change role", str(e))
 
-    
     def _delete(self):
         u = self._sel()
         if not u:
-            messagebox.showinfo("Users","Select a user"); return
-        if not messagebox.askyesno("Delete user", f"Delete '{u}'?"):
+            messagebox.showinfo("Users", "Select a user")
             return
-        try:
-            auth.delete_user(u)
-            # audit.log("user_delete", {"username": u})
-            self._reload()
-        except Exception as e:
-            # audit.log("user_delete_fail", {"username": u, "error": str(e)}, level="ERROR")
-            messagebox.showerror("Delete user", str(e))
+        if messagebox.askyesno("Delete user", f"Delete user '{u}'?"):
+            try:
+                auth.delete_user(u)
+                self._reload()
+            except Exception as e:
+                messagebox.showerror("Delete user", str(e))
+
     def _close(self):
         try:
             self.grab_release()
@@ -709,8 +771,9 @@ class UserManagementDialog(tk.Toplevel):
             pass
         self.destroy()
 
+
 class SimpleAddUser(tk.Toplevel):
-    def __init__(self, master, on_ok):
+    def __init__(self, master, on_ok, current_role: str = ""):
         super().__init__(master)
         self.title("Add user")
         self.resizable(False, False)
@@ -719,19 +782,43 @@ class SimpleAddUser(tk.Toplevel):
         root_parent = master.winfo_toplevel()
         self.transient(root_parent)
 
-        frm = ttk.Frame(self, padding=12); frm.pack(fill="both", expand=True)
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+
         ttk.Label(frm, text="Username").grid(row=0, column=0, sticky="e", padx=4, pady=4)
         ttk.Label(frm, text="Password").grid(row=1, column=0, sticky="e", padx=4, pady=4)
         ttk.Label(frm, text="Role").grid(row=2, column=0, sticky="e", padx=4, pady=4)
-        self.e_u = ttk.Entry(frm, width=24); self.e_u.grid(row=0, column=1)
-        self.e_p = ttk.Entry(frm, width=24, show="*"); self.e_p.grid(row=1, column=1)
-        self.cb  = ttk.Combobox(frm, width=22, values=["admin","operator"], state="readonly")
-        self.cb.set("operator"); self.cb.grid(row=2, column=1)
-        bar = ttk.Frame(frm); bar.grid(row=3, column=0, columnspan=2, pady=8)
+
+        self.e_u = ttk.Entry(frm, width=24)
+        self.e_u.grid(row=0, column=1)
+
+        self.e_p = ttk.Entry(frm, width=24, show="*")
+        self.e_p.grid(row=1, column=1)
+
+        # Allowed roles depend on who is logged in:
+        # - admin:  admin + operator (NO developer)
+        # - developer: admin + operator + developer
+        # - operator: won't open this dialog anyway
+        allowed_roles = ["admin", "operator", "developer"]
+        if current_role == "admin":
+            allowed_roles = ["admin", "operator"]
+
+        self.cb = ttk.Combobox(
+            frm,
+            width=22,
+            values=allowed_roles,
+            state="readonly",
+        )
+        default_role = "operator" if "operator" in allowed_roles else allowed_roles[0]
+        self.cb.set(default_role)
+        self.cb.grid(row=2, column=1)
+
+        bar = ttk.Frame(frm)
+        bar.grid(row=3, column=0, columnspan=2, pady=8)
         ttk.Button(bar, text="Create", command=self._ok).pack(side="left", padx=6)
         ttk.Button(bar, text="Cancel", command=self._close).pack(side="left", padx=6)
-        self.e_u.focus_force()
 
+        self.e_u.focus_force()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
         self.update_idletasks()
@@ -741,58 +828,106 @@ class SimpleAddUser(tk.Toplevel):
         self.grab_set()
 
     def _ok(self):
-        u = self.e_u.get().strip(); p = self.e_p.get().strip(); r = self.cb.get().strip()
+        u = self.e_u.get().strip()
+        p = self.e_p.get().strip()
+        r = self.cb.get().strip()
         if not u or not p:
-            messagebox.showerror("Add user", "Username and password required"); return
-        self.on_ok(u, p, r); self._close()
-    def _close(self): self.grab_release(); self.destroy()
+            messagebox.showerror("Add user", "Username and password required")
+            return
+        self.on_ok(u, p, r)
+        self._close()
 
-class SimpleChangePassword(tk.Toplevel):
-    def __init__(self, master, username, on_ok):
+    def _close(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+class SimpleChangeRole(tk.Toplevel):
+    def __init__(self, master, username, on_ok, current_role: str = ""):
         super().__init__(master)
-        self.title(f"Change password — {username}")
+        self.title(f"Change role — {username}")
         self.resizable(False, False)
         self.on_ok = on_ok
         self.u = username
+        self._current_role = current_role  # role of the LOGGED-IN user
 
-        # --- use the true root/top-level as the parent for transient/centering ---
         root_parent = master.winfo_toplevel()
         self.transient(root_parent)
 
-        frm = ttk.Frame(self, padding=12); frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text="New password").grid(row=0, column=0, sticky="e", padx=4, pady=4)
-        ttk.Label(frm, text="Confirm").grid(row=1, column=0, sticky="e", padx=4, pady=4)
-        self.e1 = ttk.Entry(frm, width=24, show="*"); self.e1.grid(row=0, column=1)
-        self.e2 = ttk.Entry(frm, width=24, show="*"); self.e2.grid(row=1, column=1)
-        bar = ttk.Frame(frm); bar.grid(row=2, column=0, columnspan=2, pady=8)
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text="Role").grid(row=0, column=0, sticky="e", padx=4, pady=4)
+
+        # Allowed role targets depend on actor:
+        # - admin: cannot ever choose 'developer'
+        # - developer: may see all three, BUT dev→dev changes are blocked in _ok
+        allowed_roles = ["admin", "operator", "developer"]
+        if current_role == "admin":
+            allowed_roles = ["admin", "operator"]
+
+        self.cb = ttk.Combobox(
+            frm,
+            width=22,
+            values=allowed_roles,
+            state="readonly",
+        )
+
+        # Preselect current role of target if possible
+        selected = allowed_roles[0]
+        target = auth.get_user(username)
+        if target and target.role in allowed_roles:
+            selected = target.role
+
+        self.cb.set(selected)
+        self.cb.grid(row=0, column=1)
+
+        bar = ttk.Frame(frm)
+        bar.grid(row=1, column=0, columnspan=2, pady=8)
         ttk.Button(bar, text="Save", command=self._ok).pack(side="left", padx=6)
         ttk.Button(bar, text="Cancel", command=self._close).pack(side="left", padx=6)
-        self.e1.focus_force()
 
+        self.cb.focus_force()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
-        # ---- center AFTER it's visible, relative to ROOT, not the Users window ----
         self.update_idletasks()
         self.wait_visibility()
-        center_on_parent(self, root_parent)  # or: center(self) if you only screen-center
+        center_on_parent(self, root_parent)
         self.lift()
         self.grab_set()
 
-
     def _ok(self):
-        p1 = self.e1.get().strip(); p2 = self.e2.get().strip()
-        if not p1 or p1 != p2:
-            messagebox.showerror("Change password", "Passwords do not match"); return
-        self.on_ok(self.u, p1); self._close()
+        new_role = self.cb.get().strip()
+
+        # Enforce: developer cannot change role of developer users (including themselves)
+        try:
+            target = auth.get_user(self.u)
+            target_role = target.role if target else ""
+        except Exception:
+            target_role = ""
+
+        if self._current_role == "developer" and target_role == "developer" and new_role != target_role:
+            messagebox.showerror(
+                "Change role",
+                "Developer users cannot change the role of developer accounts."
+            )
+            return
+
+        self.on_ok(self.u, new_role)
+        self._close()
 
     def _close(self):
-        try: self.grab_release()
-        except Exception: pass
+        try:
+            self.grab_release()
+        except Exception:
+            pass
         self.destroy()
 
 
 class SimpleChangeRole(tk.Toplevel):
-    def __init__(self, master, username, on_ok):
+    def __init__(self, master, username, on_ok, current_role: str = ""):
         super().__init__(master)
         self.title(f"Change role — {username}")
         self.resizable(False, False)
@@ -802,15 +937,45 @@ class SimpleChangeRole(tk.Toplevel):
         root_parent = master.winfo_toplevel()
         self.transient(root_parent)
 
-        frm = ttk.Frame(self, padding=12); frm.pack(fill="both", expand=True)
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+
         ttk.Label(frm, text="Role").grid(row=0, column=0, sticky="e", padx=4, pady=4)
-        self.cb = ttk.Combobox(frm, width=22, values=["admin","operator"], state="readonly")
-        self.cb.set("operator"); self.cb.grid(row=0, column=1)
-        bar = ttk.Frame(frm); bar.grid(row=1, column=0, columnspan=2, pady=8)
+
+        # Admin CANNOT set developer here either
+        allowed_roles = ["admin", "operator", "developer"]
+        if current_role == "admin":
+            allowed_roles = ["admin", "operator"]
+
+        self.cb = ttk.Combobox(
+            frm,
+            width=22,
+            values=allowed_roles,
+            state="readonly",
+        )
+
+        # Preselect existing role if possible
+        selected = "operator"
+        try:
+            rec = auth.list_users().get(username)
+            if isinstance(rec, dict):
+                r = rec.get("role", "")
+            else:
+                r = getattr(rec, "role", "")
+            if r in allowed_roles:
+                selected = r
+        except Exception:
+            pass
+
+        self.cb.set(selected)
+        self.cb.grid(row=0, column=1)
+
+        bar = ttk.Frame(frm)
+        bar.grid(row=1, column=0, columnspan=2, pady=8)
         ttk.Button(bar, text="Save", command=self._ok).pack(side="left", padx=6)
         ttk.Button(bar, text="Cancel", command=self._close).pack(side="left", padx=6)
-        self.cb.focus_force()
 
+        self.cb.focus_force()
         self.protocol("WM_DELETE_WINDOW", self._close)
 
         self.update_idletasks()
@@ -820,8 +985,17 @@ class SimpleChangeRole(tk.Toplevel):
         self.grab_set()
 
     def _ok(self):
-        self.on_ok(self.u, self.cb.get().strip()); self._close()
-    def _close(self): self.grab_release(); self.destroy()
+        self.on_ok(self.u, self.cb.get().strip())
+        self._close()
+
+    def _close(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+
 #--------------------- LOG VIEWER ---------------------
 class LogViewer(tk.Toplevel):
     def __init__(self, master,  can_clear: bool = True):
@@ -2263,19 +2437,47 @@ class App(tk.Tk):
         self._show_login()
 
     def _update_admin_controls(self):
-        is_admin = bool(self.user and self.user.role == "admin")
-        state = "normal" if is_admin else "disabled"
-        self.menu_settings.entryconfig("Configuration", state=state)
-        self.menu_settings.entryconfig("Users…", state=state)
+        # role can be: admin / developer / operator / None
+        role = getattr(self.user, "role", None)
+        is_admin = (role == "admin")
+        is_developer = (role == "developer")
 
-        logs_state = "normal" if self.user else "disabled"
-        self.menu_settings.entryconfig("Logs…", state=logs_state)
+        # Serial… → admin + developer only
+        try:
+            self.menu_settings.entryconfig(
+                "Serial…",
+                state="normal" if (is_admin or is_developer) else "disabled"
+            )
+        except Exception:
+            # menu item might not exist yet during early init
+            pass
+
+        # Users… → admin only
+        try:
+            self.menu_settings.entryconfig(
+                "Users…",
+                state="normal" if (is_admin or is_developer) else "disabled"
+            )
+        except Exception:
+            pass
+
+        # Logs… → any logged-in user
+        try:
+            self.menu_settings.entryconfig(
+                "Logs…",
+                state="normal" if self.user else "disabled"
+            )
+        except Exception:
+            pass
 
         # ---------- SETTINGS ----------
     def _open_serial_settings(self):
-        if not (self.user and self.user.role == "admin"):
-            messagebox.showerror("Restricted", "Only admin can open Serial Settings.")
+        role = getattr(self.user, "role", None)
+        if role not in ("admin", "developer"):
+            messagebox.showerror("Restricted", "Only admin or developer can open Serial Settings.")
             return
+
+
 
         def save(cfg):
             # compare old vs new and log
@@ -2307,11 +2509,13 @@ class App(tk.Tk):
 
 
     def _open_user_settings(self):
-        if not (self.user and self.user.role == "admin"):
-            messagebox.showerror("Restricted", "Only admin can open Users.")
+        role = getattr(self.user, "role", None)
+        if role not in ("admin", "developer"):
+            messagebox.showerror("Restricted", "Only admin or developer can open Users.")
             return
         dlg = UserManagementDialog(self)
         self.wait_window(dlg)
+
 
     # ---------- CSV ----------
     def _load_csv(self):
@@ -2639,52 +2843,42 @@ class App(tk.Tk):
     def _start(self):
         if self.running:
             return
-        pat = self.ent_pattern.get().strip()
-        if not pat:
-            pat = (self.cfg.get("pattern") or "").strip()
-            if not pat:
-                messagebox.showerror("Pattern", "No pattern specified and no default in settings!")
-                return
-            # Update UI + remember last pattern
-            self.ent_pattern.delete(0, "end")
-            self.ent_pattern.insert(0, pat)
-        old_active = (self.cfg.get("pattern_active") or "").strip()
-        if old_active != pat:
-            try:
-                logs.append_event(getattr(self.user,"username",""), "pattern changed", -1,
-                                f"{old_active}→{pat}", None)
-            except Exception:
-                pass
-        self.cfg["pattern_active"] = pat
-        try:
-            cs.save_config(self.cfg)
-        except Exception:
-            pass
-        self._audit("batch start", f"pattern={pat}")
+        if not self.data:
+            messagebox.showwarning("No data", "Load a CSV first.")
+            return
+        if not getattr(self, "dev", None) or not self.dev.is_connected():
+            messagebox.showwarning("Not connected", "Connect to the controller first.")
+            return
 
-        self.paused = False
+        # pattern from settings (same as before for extended)
+        pat = (self.cfg.get("pattern", "") or "").strip()
+
+        # protocol: extended | programmable
+        proto = (self.cfg.get("protocol", "extended") or "extended").strip().lower()
+        if proto not in ("extended", "programmable"):
+            proto = "extended"
+
+        if proto == "programmable":
+            # Synchronous, line-by-line with dialog after each line
+            self._start_programmable()
+            return
+
+        # -------- EXTENDED: old behavior (batch worker in background thread) --------
+        try:
+            start_idx, start_field = self._compute_start_index(pat)
+        except Exception as e:
+            self._log(f"[START] Cannot compute start index: {e}")
+            start_idx, start_field = 0, 0
+
         self.running = True
-        self.btn_start["state"] = "disabled"
-        if hasattr(self, "btn_pause"): self.btn_pause["state"] = "normal"
-        self.btn_stop["state"]  = "normal"
-        try:
-            logs.append_event(getattr(self.user,"username",""), "print started", -1,
-                            f"rows={len(self.data)} pattern={pat}", None)
-        except Exception:
-            pass
-              # operator override beats persisted resume; else compute from resume
-        # operator override beats persisted resume; else compute from resume
-        if self.override_start_index is not None:
-            start_idx = int(self.override_start_index)
-            start_field = 0
-        else:
-            start_idx, start_field = self._compute_start_index()
+        self.paused = False
+        self.stopped = False
 
-        # highlight immediately (turns selected row green right away)
-        try:
-            self._highlight(start_idx)
-        except Exception:
-            pass
+        self.btn_start["state"] = "disabled"
+        self.btn_pause["state"] = "normal"
+        self.btn_stop["state"] = "normal"
+        self.btn_disconnect["state"] = "disabled"
+        self.btn_use_selected["state"] = "disabled"
 
         self._log(f"[START] Starting at row {start_idx+1}, field {start_field+1}")
         self.worker = threading.Thread(
@@ -2694,11 +2888,256 @@ class App(tk.Tk):
         )
         self.worker.start()
 
-
-
         # reset override label to auto once we actually start
         self.override_start_index = None
         self.var_start_from.set("Start from: auto")
+
+    def _start_programmable(self):
+        """
+        Programmable protocol mode:
+        - send one CSV line
+        - then show dialog 'data ready for print'
+        - operator prints, then chooses: Repeat / Continue / Stop
+        """
+        if not self.data:
+            messagebox.showwarning("No data", "Load a CSV first.")
+            return
+        if not getattr(self, "dev", None) or not self.dev.is_connected():
+            messagebox.showwarning("Not connected", "Connect to the controller first.")
+            return
+
+        # Compute start row similar to extended, but we only care about row index.
+        if self.override_start_index is not None:
+            start_idx = max(0, min(self.override_start_index, len(self.data) - 1))
+        elif getattr(self, "resume_index", 0):
+            start_idx = max(0, min(int(self.resume_index), len(self.data) - 1))
+        else:
+            start_idx = 0
+
+        self._log(f"[START-PROG] Programmable mode from row {start_idx+1}")
+        try:
+            self._audit("programmable start", f"row={start_idx+1}", row=start_idx)
+        except Exception:
+            pass
+
+        # reset override text
+        self.override_start_index = None
+        self.var_start_from.set("Start from: auto")
+
+        # run synchronously on UI thread (no background worker, we show dialogs)
+        self._batch_worker_programmable(start_idx)
+
+
+    def _batch_worker_programmable(self, start_idx: int = 0):
+        """
+        Programmable protocol batch:
+
+        - Uses programmable protocol *per column*:
+            * V-fields -> Vnn<value>\r  via prog_set_variable()
+            * Q-fields -> Qnn<value>\r  via prog_set_query_numbered()
+          V and Q indexes are counted separately within the row:
+            Q1, Q2, ... regardless of how many V fields are between them,
+            and V1, V2, ... regardless of Q fields in-between.
+        - Column mode decision logic (V/Q/CUSTOM + column_modes) is the same
+          as in the extended batch worker.
+        - After finishing all fields for the row, shows the dialog
+          "Data ready for print" with Repeat / Continue / Stop.
+        """
+        from tkinter import messagebox
+
+        if not getattr(self, "dev", None) or not self.dev.is_connected():
+            messagebox.showwarning("Not connected", "Connect to the controller first.")
+            return
+
+        if not self.data:
+            messagebox.showwarning("No data", "Load a CSV first.")
+            return
+
+        # ---- data send mode + column modes (same semantics as extended) ----
+        cfg = getattr(self, "cfg", {}) or {}
+
+        try:
+            mode = str(cfg.get("data_send_mode", "Q")).strip().upper()
+        except Exception:
+            mode = "Q"
+
+        is_custom = (mode == "CUSTOM")
+        if mode not in ("V", "Q", "CUSTOM"):
+            mode = "Q"
+
+        # default field mode if column_modes is missing/short
+        default_mode = "Q" if mode == "Q" else "V"
+
+        # local copy of column_modes list (for CUSTOM)
+        col_modes = list(getattr(self, "column_modes", [])) if hasattr(self, "column_modes") else []
+
+        total = len(self.data)
+        idx = max(0, min(start_idx, total - 1))
+
+        while 0 <= idx < total:
+            row = self.data[idx]
+
+            # Human-readable line text for logging + dialog
+            line_text = ";".join("" if c is None else str(c) for c in row)
+
+            # highlight current row
+            self._highlight(idx)
+            self._log(f"[PROG] Row {idx+1}: line = {line_text!r}")
+
+            # --- per-row programmable sending ---
+            v_index = 0
+            q_index = 0
+
+            try:
+                for col_idx, cell in enumerate(row):
+                    value = "" if cell is None else str(cell)
+
+                    # Decide mode for this column: 'V' or 'Q'
+                    if is_custom and col_modes and col_idx < len(col_modes):
+                        m = (col_modes[col_idx] or "").upper()
+                        if m in ("V", "Q"):
+                            mode_for_field = m
+                        else:
+                            mode_for_field = default_mode
+                    else:
+                        # global V or Q for the whole table
+                        mode_for_field = default_mode
+
+                    # --- Build and send programmable command for this field ---
+                    if mode_for_field == "Q":
+                        # QUERY text → Qnn<string>\r
+                        q_index += 1
+                        buf_no = q_index
+                        cmd = f"Q{buf_no:02d}{value}\r"
+                        self._log(f"[PROG-CMD] col {col_idx+1} (Q{buf_no:02d}) -> {value!r} | raw={cmd!r}")
+                        # use numbered query helper (Qnn<string>\r)
+                        self.dev.prog_set_query_numbered(buf_no, value)
+                    else:
+                        # VARIABLE text → Vnn<string>\r
+                        v_index += 1
+                        var_no = v_index
+                        cmd = f"V{var_no:02d}{value}\r"
+                        self._log(f"[PROG-CMD] col {col_idx+1} (V{var_no:02d}) -> {value!r} | raw={cmd!r}")
+                        # use variable helper (Vnn<string>\r)
+                        self.dev.prog_set_variable(var_no, value)
+
+                # If we got here, all fields for this row were sent successfully.
+                try:
+                    logs.append_event(
+                        getattr(self.user, "username", ""),
+                        "programmable row send",
+                        idx + 1,
+                        f"line={line_text!r}",
+                        None,
+                    )
+                except Exception:
+                    pass
+
+            except Exception as e:
+                # hard error while sending one of the fields
+                self._log(f"[PROG] Error sending programmable data for row {idx+1}: {e}")
+                messagebox.showerror(
+                    "Programmable",
+                    f"Error while sending data for row {idx+1}:\n{e}",
+                )
+                # stop on hard error
+                break
+
+            # Ask operator what to do next (dialog shows the human-readable line)
+            choice = self._ask_programmable_choice(idx, line_text)
+            if choice == "repeat":
+                self._log(f"[PROG] Operator chose REPEAT for row {idx+1}")
+                try:
+                    self._audit("programmable repeat", f"row={idx+1}", row=idx)
+                except Exception:
+                    pass
+                # do NOT change idx, just send the same row again next loop
+                continue
+
+            if choice == "continue":
+                self._log(f"[PROG] Operator chose CONTINUE after row {idx+1}")
+                try:
+                    # next row will be idx+1
+                    self._audit("programmable continue", f"row={idx+1}", row=idx)
+                    self._save_resume(idx + 1, 0, idx)
+                except Exception:
+                    pass
+                idx += 1
+                continue
+
+            # STOP or dialog cancelled
+            self._log(f"[PROG] Operator chose STOP at row {idx+1}")
+            try:
+                self._audit("programmable stop", f"row={idx+1}", row=idx)
+                self._save_resume(idx, 0, idx)
+            except Exception:
+                pass
+            break
+
+        self._log("[PROG] Programmable batch finished.")
+
+
+    def _ask_programmable_choice(self, row_idx: int, line: str) -> str:
+        """
+        Modal dialog:
+        - message: data ready for print
+        - buttons: Repeat / Continue / Stop
+        Returns: "repeat" | "continue" | "stop"
+        """
+        dlg = tk.Toplevel(self)
+        dlg.title("Data ready for print")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+
+        txt = (
+            f"Row {row_idx+1} is ready for print.\n\n"
+            f"Data:\n{line}\n\n"
+            "Start print on the machine, then choose:"
+        )
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        lbl = ttk.Label(frm, text=txt, justify="left")
+        lbl.grid(row=0, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 10))
+
+        choice = {"val": "stop"}  # default if window closed
+
+        def _do_repeat():
+            choice["val"] = "repeat"
+            dlg.destroy()
+
+        def _do_continue():
+            choice["val"] = "continue"
+            dlg.destroy()
+
+        def _do_stop():
+            choice["val"] = "stop"
+            dlg.destroy()
+
+        btn_repeat = ttk.Button(frm, text="Repeat same row", command=_do_repeat)
+        btn_continue = ttk.Button(frm, text="Continue (next row)", command=_do_continue)
+        btn_stop = ttk.Button(frm, text="Stop", command=_do_stop)
+
+        btn_repeat.grid(row=1, column=0, padx=4, pady=4, sticky="we")
+        btn_continue.grid(row=1, column=1, padx=4, pady=4, sticky="we")
+        btn_stop.grid(row=1, column=2, padx=4, pady=4, sticky="we")
+
+        # default focus = Continue
+        btn_continue.focus_set()
+
+        dlg.bind("<Escape>", lambda e: _do_stop())
+        dlg.protocol("WM_DELETE_WINDOW", _do_stop)
+
+        dlg.update_idletasks()
+        try:
+            center_on_parent(dlg, self)
+        except Exception:
+            pass
+
+        dlg.grab_set()
+        dlg.wait_window()
+        return choice["val"]
 
     def _stop(self):
         if not self.running:
@@ -3263,13 +3702,23 @@ class App(tk.Tk):
             self.resume_index = 0
             self.current_field = 0
 
+    def _format_line(self, row) -> str:
+        """
+        Build one programmable line from the CSV row.
+
+        Uses the same delimiter that was detected when the CSV was loaded,
+        defaults to ';' if anything is missing.
+        """
+        delim = getattr(self, "csv_delimiter", ";")
+        return delim.join("" if c is None else str(c) for c in row)
+
     def _load_csv_path(self, path: str):
         with open(path, "r", encoding="utf-8-sig", newline="") as f:
             text = f.read()
         header, rows, used_delim = self._parse_csv_text(text)
         self.header = header
         self.data = rows
-
+        self.csv_delimiter = used_delim
         # New CSV loaded → reset runtime custom cache
         self.custom_column_modes = None
         self.column_modes = []

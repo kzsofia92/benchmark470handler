@@ -7,7 +7,7 @@ from pathlib import Path
 
 import secure_store as sstore
 
-Role = Literal["admin", "operator"]
+Role = Literal["admin", "operator", "developer"]
 BASE_DIR = Path(__file__).resolve().parent
 LEGACY_JSON = BASE_DIR / "users.json"   # mirror path already used by secure_store
 
@@ -76,6 +76,10 @@ def _save_all(db: Dict[str, Any]) -> None:
 def _admin_count(db: Dict[str, Any]) -> int:
     return sum(1 for u in db.get("users", {}).values() if u.get("role") == "admin")
 
+def _developer_count(db: Dict[str, Any]) -> int:
+    return sum(1 for u in db.get("users", {}).values() if u.get("role") == "developer")
+
+
 def init_seed_admin(force: bool = False) -> bool:
     """
     Ensure admin/admin exists. If force or empty, reseed.
@@ -96,6 +100,11 @@ def init_seed_admin(force: bool = False) -> bool:
             with open(LEGACY_JSON, "w", encoding="utf-8") as f:
                 json.dump(db, f, indent=2, ensure_ascii=False)
         return True
+    if not any(u.get("role") == "developer" for u in users.values()):
+        d = _new_user("developer", "developer", "developer")
+        db["users"][d.username] = d.__dict__
+        _save_all(db)
+
     return False
 
 def list_users() -> Dict[str, Dict[str, Any]]:
@@ -132,13 +141,15 @@ def change_password(username: str, new_password: str) -> None:
     users[name] = u.__dict__
     _save_all(db)
 
-def set_role(username: str, role: Role) -> None:
+def change_role(username: str, role: Role) -> None:
     db = _repair(_load_all())
     users = db.get("users", {})
     name = _canon(username)
     if name not in users: raise ValueError("User not found")
     if users[name]["role"] == "admin" and role != "admin" and _admin_count(db) <= 1:
         raise ValueError("Cannot demote the last admin")
+    if users[name]["role"] == "developer" and role != "developer" and _developer_count(db) <= 1:
+        raise ValueError("Cannot demote the last developer")
     users[name]["role"] = role
     _save_all(db)
 
@@ -149,5 +160,7 @@ def delete_user(username: str) -> None:
     if name not in users: return
     if users[name]["role"] == "admin" and _admin_count(db) <= 1:
         raise ValueError("Cannot delete the last admin")
+    if users[name]["role"] == "developer" and _developer_count(db) <= 1:
+        raise ValueError("Cannot delete the last developer")
     del users[name]
     _save_all(db)
