@@ -400,6 +400,15 @@ class SettingsDialog(tk.Toplevel):
         self.cb_data_mode.set(self.cfg.get("data_send_mode", "Q"))
         self.cb_data_mode.grid(row=9, column=1, columnspan=3, sticky="we", padx=4, pady=4)
 
+        self.btn_columns = ttk.Button(
+            frm,
+            text="...",
+            command=self._open_column_modes,
+        )
+        self.btn_columns.grid(row=9, column=3, sticky="w", padx=4, pady=4)
+        if (self.cfg.get("data_send_mode") != "CUSTOM"):
+            self.btn_columns.configure(state="disabled")
+
         # ------- PRINT TRIGGER MODE -------
         ttk.Label(frm, text="Print trigger mode").grid(row=10, column=0, sticky="e", padx=4, pady=4)
         self.cb_trigger_mode = ttk.Combobox(
@@ -569,6 +578,58 @@ class SettingsDialog(tk.Toplevel):
             pass
         self.destroy()
 
+    def _open_column_modes(self):
+        """
+        Open the ColumnModeDialog from Serial settings.
+
+        Uses the main app's _ask_column_modes so everything is stored in cfg
+        exactly the same way as when CUSTOM is triggered on CSV load.
+        """
+        # Only makes sense if Data send mode is CUSTOM
+        mode = (self.cb_data_mode.get() or "").strip().upper()
+        if mode != "CUSTOM":
+            messagebox.showinfo(
+                "Column modes",
+                "Set Data send mode to CUSTOM first."
+            )
+            return
+
+        # Get the top-level app window
+        try:
+            app = self.master.winfo_toplevel()
+        except Exception:
+            app = self.master
+
+        # Safety: check we really have the helper and a loaded CSV
+        if not hasattr(app, "_ask_column_modes"):
+            messagebox.showerror(
+                "Column modes",
+                "Column mode editor is not available in this context."
+            )
+            return
+
+        if not getattr(app, "header", None):
+            messagebox.showwarning(
+                "Column modes",
+                "Load a CSV first, then configure column modes."
+            )
+            return
+
+        # Temporarily release our grab so the column dialog can be used
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+
+        try:
+            app._ask_column_modes()
+        finally:
+            # Re-grab settings dialog to keep it modal
+            try:
+                self.grab_set()
+            except Exception:
+                pass
+
 
 #----------TIMEOUT DECISION DIALOG----------
 class TimeoutDialog(tk.Toplevel):
@@ -612,9 +673,37 @@ class TimeoutDialog(tk.Toplevel):
         ttk.Label(frm, text=msg, justify="left").pack(anchor="w", pady=(0,8))
 
         btns = ttk.Frame(frm); btns.pack(fill="x")
-        ttk.Button(btns, text=btn_continue, command=lambda: self._choose("continue")).pack(side="left", padx=4)
-        ttk.Button(btns, text=btn_repeat,   command=lambda: self._choose("repeat")).pack(side="left", padx=4)
-        ttk.Button(btns, text="Exit",       command=lambda: self._choose("exit")).pack(side="left", padx=4)
+       
+        btn_continue = ttk.Button(
+            btns, text="Continue (next row)", command=lambda: self._choose("continue")
+        )
+        btn_repeat = ttk.Button(
+            btns, text="Repeat same row", command=lambda: self._choose("repeat")
+        )
+        btn_exit = ttk.Button(
+            btns, text="Exit batch", command=lambda: self._choose("exit")
+        )
+
+        btn_continue.pack(side="left", padx=4)
+        btn_repeat.pack(side="left", padx=4)
+        btn_exit.pack(side="left", padx=4)
+
+        # default focus = Continue
+        btn_continue.focus_set()
+
+        # --- keyboard shortcuts ---
+        # Enter / keypad Enter = Continue
+        self.bind("<Return>", lambda e: self._choose("continue"))
+        self.bind("<KP_Enter>", lambda e: self._choose("continue"))
+        # Ctrl+R = Repeat
+        self.bind("<Control-r>", lambda e: self._choose("repeat"))
+        self.bind("<Control-R>", lambda e: self._choose("repeat"))
+        # Ctrl+S = Exit / Stop
+        self.bind("<Control-s>", lambda e: self._choose("exit"))
+        self.bind("<Control-S>", lambda e: self._choose("exit"))
+        # Esc = Exit as before
+        self.bind("<Escape>", lambda e: self._choose("exit"))
+        self.protocol("WM_DELETE_WINDOW", lambda: self._choose("exit"))
 
         try:
             self.update_idletasks()
@@ -1045,6 +1134,12 @@ class LogViewer(tk.Toplevel):
         ttk.Label(bar1, text="Search:").pack(side="left", padx=(12, 4))
         self.ent_search = ttk.Entry(bar1, width=24)
         self.ent_search.pack(side="left")
+         # Enter in search -> apply
+        self.ent_search.bind("<Return>", lambda _e=None: self._apply_search())
+        self.ent_search.bind("<KP_Enter>", lambda _e=None: self._apply_search())
+        # When search becomes empty -> reset to "all"
+        self.ent_search.bind("<KeyRelease>", self._on_search_key)
+
         
         # Apply button (SEARCH ONLY)
         ttk.Button(bar1, text="Apply", command=self._apply_search).pack(side="left", padx=6)
@@ -1384,6 +1479,11 @@ class LogViewer(tk.Toplevel):
         if q:
             st_view = [r for r in st_view if q in ((r.get("line_content","") + " " + r.get("error","")).lower())]
         self._show(st_view)
+
+    def _on_search_key(self, event=None):
+        """When search box is cleared, reset search to 'all'."""
+        if not self.ent_search.get().strip():
+            self._apply_search()
 
     def _parse_timestamp(self, ts: str):
         """Return datetime.date or None from 'timestamp' field."""
@@ -2014,6 +2114,15 @@ class ColumnModeDialog(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+
+        # For ttk.Button
+        self.bind_class("TButton", "<Return>", lambda e: e.widget.invoke())
+        self.bind_class("TButton", "<KP_Enter>", lambda e: e.widget.invoke())
+
+        # For classic tk.Button (if you still use any)
+        self.bind_class("Button", "<Return>", lambda e: e.widget.invoke())
+        self.bind_class("Button", "<KP_Enter>", lambda e: e.widget.invoke())
+        
         self.title("TMC470 CSV Sender")
         self.geometry("1100x700")
         self.cfg = cs.load_config()
@@ -2765,7 +2874,8 @@ class App(tk.Tk):
                 )
                 # live verification unchanged
                 mode = self.cfg.get("connection_mode", "test")
-                if mode == "live":
+                protocol = self.cfg.get("protocol")
+                if (mode == "live" and protocol == "extended"):
                     ok, status, raw = self.dev.verify_live_connection(tries=2, sleep_ms=120)
                     if not ok:
                         try:
@@ -2850,25 +2960,46 @@ class App(tk.Tk):
             messagebox.showwarning("Not connected", "Connect to the controller first.")
             return
 
-        # pattern from settings (same as before for extended)
-        pat = (self.cfg.get("pattern", "") or "").strip()
+        if self.running:
+            return
+        pat = self.ent_pattern.get().strip()
+        if not pat:
+            pat = (self.cfg.get("pattern") or "").strip()
+            if not pat:
+                messagebox.showerror("Pattern", "No pattern specified and no default in settings!")
+                return
+            # Update UI + remember last pattern
+            self.ent_pattern.delete(0, "end")
+            self.ent_pattern.insert(0, pat)
+        old_active = (self.cfg.get("pattern_active") or "").strip()
+        if old_active != pat:
+            try:
+                logs.append_event(getattr(self.user,"username",""), "pattern changed", -1,
+                                f"{old_active}→{pat}", None)
+            except Exception:
+                pass
+        self.cfg["pattern_active"] = pat
+        try:
+            cs.save_config(self.cfg)
+        except Exception:
+            pass
 
         # protocol: extended | programmable
         proto = (self.cfg.get("protocol", "extended") or "extended").strip().lower()
         if proto not in ("extended", "programmable"):
             proto = "extended"
 
+       
+        # -------- EXTENDED: old behavior (batch worker in background thread) --------
+        try:
+            start_idx, start_field = self._compute_start_index()
+        except Exception as e:
+            self._log(f"[START] Cannot compute start index: {e}")
+            start_idx, start_field = 0, 0
         if proto == "programmable":
             # Synchronous, line-by-line with dialog after each line
             self._start_programmable()
             return
-
-        # -------- EXTENDED: old behavior (batch worker in background thread) --------
-        try:
-            start_idx, start_field = self._compute_start_index(pat)
-        except Exception as e:
-            self._log(f"[START] Cannot compute start index: {e}")
-            start_idx, start_field = 0, 0
 
         self.running = True
         self.paused = False
@@ -2893,12 +3024,8 @@ class App(tk.Tk):
         self.var_start_from.set("Start from: auto")
 
     def _start_programmable(self):
-        """
-        Programmable protocol mode:
-        - send one CSV line
-        - then show dialog 'data ready for print'
-        - operator prints, then chooses: Repeat / Continue / Stop
-        """
+        if self.running:
+            return
         if not self.data:
             messagebox.showwarning("No data", "Load a CSV first.")
             return
@@ -2906,45 +3033,64 @@ class App(tk.Tk):
             messagebox.showwarning("Not connected", "Connect to the controller first.")
             return
 
-        # Compute start row similar to extended, but we only care about row index.
-        if self.override_start_index is not None:
-            start_idx = max(0, min(self.override_start_index, len(self.data) - 1))
-        elif getattr(self, "resume_index", 0):
-            start_idx = max(0, min(int(self.resume_index), len(self.data) - 1))
-        else:
-            start_idx = 0
+        # exact extended pattern logic
+        pat = self.ent_pattern.get().strip()
+        if not pat:
+            pat = (self.cfg.get("pattern") or "").strip()
+            if not pat:
+                messagebox.showerror("Pattern", "No pattern specified and no default in settings!")
+                return
+            self.ent_pattern.delete(0, "end")
+            self.ent_pattern.insert(0, pat)
 
-        self._log(f"[START-PROG] Programmable mode from row {start_idx+1}")
+        self.cfg["pattern_active"] = pat
         try:
-            self._audit("programmable start", f"row={start_idx+1}", row=start_idx)
-        except Exception:
+            cs.save_config(self.cfg)
+        except:
             pass
 
-        # reset override text
+        # EXACT extended start-index logic
+        if self.override_start_index is not None:
+            start_idx = int(self.override_start_index)
+            start_field = 0
+        else:
+            try:
+                start_idx, start_field = self._compute_start_index()
+            except:
+                start_idx, start_field = 0, 0
+
+        self.running = True
+        self.paused = False
+        self.stopped = False
+
+        self.btn_start["state"] = "disabled"
+        self.btn_pause["state"] = "disabled"
+        self.btn_stop["state"] = "normal"
+        self.btn_disconnect["state"] = "disabled"
+        self.btn_use_selected["state"] = "disabled"
+
+        self._menubar_set_disabled_color(True)
+        self._menus_enabled = False
+        try: self.btn_load_csv["state"] = "disabled"
+        except: pass
+        try: self.ent_pattern["state"] = "disabled"
+        except: pass
+
+        self._log(f"[START-PROG] Starting programmable at row {start_idx+1}, field {start_field+1}")
+
+        # programmable now works EXACTLY like extended: same args
+        self.worker = threading.Thread(
+            target=self._batch_worker_programmable,
+            args=(pat, start_idx, start_field),
+            daemon=True,
+        )
+        self.worker.start()
+
         self.override_start_index = None
         self.var_start_from.set("Start from: auto")
 
-        # run synchronously on UI thread (no background worker, we show dialogs)
-        self._batch_worker_programmable(start_idx)
 
-
-    def _batch_worker_programmable(self, start_idx: int = 0):
-        """
-        Programmable protocol batch:
-
-        - Uses programmable protocol *per column*:
-            * V-fields -> Vnn<value>\r  via prog_set_variable()
-            * Q-fields -> Qnn<value>\r  via prog_set_query_numbered()
-          V and Q indexes are counted separately within the row:
-            Q1, Q2, ... regardless of how many V fields are between them,
-            and V1, V2, ... regardless of Q fields in-between.
-        - Column mode decision logic (V/Q/CUSTOM + column_modes) is the same
-          as in the extended batch worker.
-        - After finishing all fields for the row, shows the dialog
-          "Data ready for print" with Repeat / Continue / Stop.
-        """
-        from tkinter import messagebox
-
+    def _batch_worker_programmable(self, pattern: str, start_idx: int = 0, start_field: int = 0):
         if not getattr(self, "dev", None) or not self.dev.is_connected():
             messagebox.showwarning("Not connected", "Connect to the controller first.")
             return
@@ -2953,128 +3099,122 @@ class App(tk.Tk):
             messagebox.showwarning("No data", "Load a CSV first.")
             return
 
-        # ---- data send mode + column modes (same semantics as extended) ----
-        cfg = getattr(self, "cfg", {}) or {}
+        user_name = getattr(self.user, "username", "") if self.user else ""
+        cfg = self.cfg or {}
 
+        # exact extended pattern load logic
+        if pattern:
+            try:
+                self.q.put(("log", f"[PROG-FRAME] P{pattern}\\r"))
+            except:
+                pass
+            try:
+                self.dev.prog_load_pattern(pattern)
+            except Exception as e:
+                self.q.put(("log", f"[PROG] Pattern load ERROR: {e}"))
+                messagebox.showerror("Programmable", f"Pattern load failed:\n{e}")
+                self.running = False
+                return
+
+        # same V/Q/custom handling as extended
         try:
             mode = str(cfg.get("data_send_mode", "Q")).strip().upper()
-        except Exception:
+        except:
             mode = "Q"
-
         is_custom = (mode == "CUSTOM")
         if mode not in ("V", "Q", "CUSTOM"):
             mode = "Q"
-
-        # default field mode if column_modes is missing/short
         default_mode = "Q" if mode == "Q" else "V"
-
-        # local copy of column_modes list (for CUSTOM)
         col_modes = list(getattr(self, "column_modes", [])) if hasattr(self, "column_modes") else []
 
         total = len(self.data)
         idx = max(0, min(start_idx, total - 1))
+        field0 = start_field
 
-        while 0 <= idx < total:
+        while idx < total and self.running:
+
             row = self.data[idx]
-
-            # Human-readable line text for logging + dialog
             line_text = ";".join("" if c is None else str(c) for c in row)
+            total_fields = len(row)
 
-            # highlight current row
-            self._highlight(idx)
-            self._log(f"[PROG] Row {idx+1}: line = {line_text!r}")
+            self.q.put(("hl", idx))
+            self._save_resume(idx, idx, field0)
 
-            # --- per-row programmable sending ---
             v_index = 0
             q_index = 0
+            col = field0
+            field0 = 0
 
-            try:
-                for col_idx, cell in enumerate(row):
-                    value = "" if cell is None else str(cell)
+            # send columns exactly like extended
+            while col < total_fields and self.running:
 
-                    # Decide mode for this column: 'V' or 'Q'
-                    if is_custom and col_modes and col_idx < len(col_modes):
-                        m = (col_modes[col_idx] or "").upper()
-                        if m in ("V", "Q"):
-                            mode_for_field = m
-                        else:
-                            mode_for_field = default_mode
-                    else:
-                        # global V or Q for the whole table
-                        mode_for_field = default_mode
+                value = "" if row[col] is None else str(row[col])
 
-                    # --- Build and send programmable command for this field ---
-                    if mode_for_field == "Q":
-                        # QUERY text → Qnn<string>\r
-                        q_index += 1
-                        buf_no = q_index
-                        cmd = f"Q{buf_no:02d}{value}\r"
-                        self._log(f"[PROG-CMD] col {col_idx+1} (Q{buf_no:02d}) -> {value!r} | raw={cmd!r}")
-                        # use numbered query helper (Qnn<string>\r)
-                        self.dev.prog_set_query_numbered(buf_no, value)
-                    else:
-                        # VARIABLE text → Vnn<string>\r
-                        v_index += 1
-                        var_no = v_index
-                        cmd = f"V{var_no:02d}{value}\r"
-                        self._log(f"[PROG-CMD] col {col_idx+1} (V{var_no:02d}) -> {value!r} | raw={cmd!r}")
-                        # use variable helper (Vnn<string>\r)
-                        self.dev.prog_set_variable(var_no, value)
+                # column mode
+                if is_custom and col_modes and col < len(col_modes):
+                    m = (col_modes[col] or "").upper()
+                    mode_for_field = m if m in ("V", "Q") else default_mode
+                else:
+                    mode_for_field = default_mode
 
-                # If we got here, all fields for this row were sent successfully.
-                try:
-                    logs.append_event(
-                        getattr(self.user, "username", ""),
-                        "programmable row send",
-                        idx + 1,
-                        f"line={line_text!r}",
-                        None,
-                    )
-                except Exception:
-                    pass
+                if mode_for_field == "Q":
+                    q_index += 1
+                    nn = f"{q_index:02d}"
+                    raw = f"Q{nn}{value}\\r"
+                    self.q.put(("log", f"[PROG-CMD] Q{nn} <- {value!r} | raw={raw!r}"))
+                    self.dev.prog_set_query_numbered(q_index, value)
+                else:
+                    v_index += 1
+                    nn = f"{v_index:02d}"
+                    raw = f"V{nn}{value}\\r"
+                    self.q.put(("log", f"[PROG-CMD] V{nn} <- {value!r} | raw={raw!r}"))
+                    self.dev.prog_set_variable(v_index, value)
 
-            except Exception as e:
-                # hard error while sending one of the fields
-                self._log(f"[PROG] Error sending programmable data for row {idx+1}: {e}")
-                messagebox.showerror(
-                    "Programmable",
-                    f"Error while sending data for row {idx+1}:\n{e}",
-                )
-                # stop on hard error
+                col += 1
+                self._save_resume(idx, idx if col < total_fields else idx, col if col < total_fields else 0)
+
+            if not self.running:
                 break
 
-            # Ask operator what to do next (dialog shows the human-readable line)
+            logs.append_event(user_name, "programmable send", idx + 1, line_text, None)
+
+            # END-OF-LINE OPERATOR DIALOG
             choice = self._ask_programmable_choice(idx, line_text)
+
             if choice == "repeat":
-                self._log(f"[PROG] Operator chose REPEAT for row {idx+1}")
-                try:
-                    self._audit("programmable repeat", f"row={idx+1}", row=idx)
-                except Exception:
-                    pass
-                # do NOT change idx, just send the same row again next loop
+                self._save_resume(idx, idx, 0)
                 continue
 
-            if choice == "continue":
-                self._log(f"[PROG] Operator chose CONTINUE after row {idx+1}")
-                try:
-                    # next row will be idx+1
-                    self._audit("programmable continue", f"row={idx+1}", row=idx)
-                    self._save_resume(idx + 1, 0, idx)
-                except Exception:
-                    pass
+            elif choice == "continue":
+                self._save_resume(idx, idx + 1, 0)
                 idx += 1
                 continue
 
-            # STOP or dialog cancelled
-            self._log(f"[PROG] Operator chose STOP at row {idx+1}")
-            try:
-                self._audit("programmable stop", f"row={idx+1}", row=idx)
-                self._save_resume(idx, 0, idx)
-            except Exception:
-                pass
-            break
+            else:  # stop
+                self._save_resume(idx, idx, 0)
+                break
 
-        self._log("[PROG] Programmable batch finished.")
+        # extended-identical UI reset
+        self.running = False
+        self.paused = False
+        self.stopped = False
+
+        try: self.btn_start["state"] = "normal"
+        except: pass
+        try: self.btn_stop["state"] = "disabled"
+        except: pass
+        try: self.btn_disconnect["state"] = "normal"
+        except: pass
+        try: self.ent_pattern["state"] = "normal"
+        except: pass
+        try: self.btn_load_csv["state"] = "normal"
+        except: pass
+
+        self._menubar_set_disabled_color(False)
+        self._menus_enabled = True
+
+        try: self.q.put(("done", None))
+        except: pass
 
 
     def _ask_programmable_choice(self, row_idx: int, line: str) -> str:
@@ -3126,6 +3266,17 @@ class App(tk.Tk):
         # default focus = Continue
         btn_continue.focus_set()
 
+        # --- keyboard shortcuts ---
+        # Enter / keypad Enter = Continue
+        dlg.bind("<Return>", lambda e: _do_continue())
+        dlg.bind("<KP_Enter>", lambda e: _do_continue())
+        # Ctrl+R = Repeat
+        dlg.bind("<Control-r>", lambda e: _do_repeat())
+        dlg.bind("<Control-R>", lambda e: _do_repeat())
+        # Ctrl+S = Stop
+        dlg.bind("<Control-s>", lambda e: _do_stop())
+        dlg.bind("<Control-S>", lambda e: _do_stop())
+        # Esc = Stop (existing behaviour)
         dlg.bind("<Escape>", lambda e: _do_stop())
         dlg.protocol("WM_DELETE_WINDOW", _do_stop)
 
@@ -3551,6 +3702,7 @@ class App(tk.Tk):
             self.q.put(("done", None))
 
         # ---------- UI PUMP / HELPERS ----------
+       # ---------- UI PUMP / HELPERS ----------
     def _pump(self):
         try:
             while True:
@@ -3560,18 +3712,41 @@ class App(tk.Tk):
                 elif kind == "log":
                     self._log(payload)
                 elif kind == "ask_timeout":
-                    # payload: dict(idx=..., stage=..., seconds=...)
+                    # payload: dict(idx=. stage=. seconds=.)
                     self._ask_timeout_decision(payload["idx"], payload["stage"], payload["seconds"])
                 elif kind == "done":
+                    # worker finished after normal end, PAUSE or STOP
                     self.running = False
-                    self.btn_pause["state"] = "disabled" if hasattr(self, "btn_pause") else "disabled"
-                    self.btn_stop["state"]  = "disabled"
+                    if hasattr(self, "btn_pause"):
+                        self.btn_pause["state"] = "disabled"
+                    self.btn_stop["state"] = "disabled"
                     self._update_start_enabled()
+
+                    # if we are still physically connected, allow Disconnect again
+                    dev = getattr(self, "dev", None)
+                    connected = False
+                    if dev is not None:
+                        is_conn_attr = getattr(dev, "is_connected", None)
+                        if callable(is_conn_attr):
+                            try:
+                                connected = bool(is_conn_attr())
+                            except Exception:
+                                connected = False
+                        else:
+                            ser = getattr(dev, "ser", None)
+                            try:
+                                connected = bool(ser and ser.is_open)
+                            except Exception:
+                                connected = bool(ser)
+
+                    if connected:
+                        try:
+                            self.btn_disconnect["state"] = "normal"
+                        except Exception:
+                            pass
         except queue.Empty:
             pass
         self.after(80, self._pump)
-
-
 
     def _highlight(self, idx: int):
         # clear previous highlight, then highlight the active row in green
